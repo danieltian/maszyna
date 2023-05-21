@@ -32,11 +32,11 @@ public:
     void Update();
     bool HasActiveLines();
 // members
-    std::deque<TTranscript> aLines;
+    std::deque<TTranscript> aLines; // Lines that are currently showing or have been shown.
 
 private:
 // members
-    std::vector <TTranscript> aQueuedLines;
+    std::vector <TTranscript> aQueuedLines; // Lines that are queued up to be shown.
     size_t mLastCompleteIndex { 0 };
 };
 
