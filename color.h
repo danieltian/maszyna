@@ -9,6 +9,7 @@ glm::vec4 const shadow{ 0.25f, 0.30f, 0.35f, 1.f };
 glm::vec4 const uitextred{ 164.0f / 255.0f, 84.0f / 255.0f, 84.0f / 255.0f, 1.f };
 glm::vec4 const uitextorange{ 164.0f / 255.0f, 132.0f / 255.0f, 84.0f / 255.0f, 1.f };
 glm::vec4 const uitextgreen{ 84.0f / 255.0f, 164.0f / 255.0f, 132.0f / 255.0f, 1.f };
+glm::vec4 const uitextlightgray{ 150.0f / 255.0f, 150.0f / 255.0f, 150.0f / 255.0f, 1.f };
 
 inline
 glm::vec3

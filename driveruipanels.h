@@ -104,6 +104,7 @@ private:
     bool render_section_uart();
 #endif
     bool render_section_settings();
+    ImVec4 color_to_imvec4( glm::vec4 color );
 // members
     std::array<char, 1024> m_buffer;
     std::array<char, 128> m_eventsearch;
@@ -148,6 +149,10 @@ public:
     transcripts_panel( std::string const &Name, bool const Isopen )
         : ui_panel( Name, Isopen ) {}
 
-    void update() override;
 	void render() override;
+
+private:
+    bool show_timestamps { true };
+    bool show_history { true }; // Show all previous messages.
+    bool auto_hide { false }; // Automatically hide when there are no active messages.
 };

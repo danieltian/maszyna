@@ -47,6 +47,8 @@ public:
             return m_timezonebias; }
 	void
 	    set_time(int yearday, int minute);
+    std::string
+        to_string();
 
     /** Returns std::string in format: `"mm:ss"`. */
     operator std::string();

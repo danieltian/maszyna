@@ -254,4 +254,12 @@ scenario_time::is_leap( int const Year ) const {
     return ( ( Year % 4 == 0 ) && ( ( Year % 100 != 0 ) || ( Year % 400 == 0 ) ) );
 
 }
+
+std::string
+scenario_time::to_string() {
+    char time[9];
+    snprintf(time, sizeof(time), "%02d:%02d:%02d", m_time.wHour, m_time.wMinute, m_time.wSecond);
+
+    return std::string(time);
+}
 //---------------------------------------------------------------------------

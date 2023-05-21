@@ -30,6 +30,7 @@ http://mozilla.org/MPL/2.0/.
 #include "utilities.h"
 #include "Logs.h"
 #include "widgets/vehicleparams.h"
+#include "imgui/imgui_internal.h"
 
 #define DRIVER_HINT_CONTENT
 #include "driverhints.h"
@@ -628,7 +629,7 @@ debug_panel::render() {
                 avlports[i] = (char *) UartStatus.available_ports[i].c_str();
             }
             ImGui::Combo("Port", &UartStatus.selected_port_index, avlports, ports_num);
-            ImGui::Combo("Baud", &UartStatus.selected_baud_index, uart_baudrates_list, uart_baudrates_list_num);
+            ImGui::Combo("Baud", &UartStatus.selected_baud_index, uart_baudrates_list, (int) uart_baudrates_list_num);
             ImGui::Checkbox("Enabled", &UartStatus.enabled);
         }
 #endif
@@ -1516,28 +1517,22 @@ debug_panel::render_section_settings() {
     return true;
 }
 
-void
-transcripts_panel::update() {
-
-	if( false == is_open ) { return; }
-
-	text_lines.clear();
-
-	for( auto const &transcript : ui::Transcripts.aLines ) {
-		if( Global.fTimeAngleDeg + ( transcript.fShow - Global.fTimeAngleDeg > 180 ? 360 : 0 ) < transcript.fShow ) { continue; }
-		text_lines.emplace_back( ExchangeCharInString( transcript.asText, '|', ' ' ), colors::white );
-	}
+ImVec4
+color_to_imvec4(glm::vec4 color)
+{
+	return ImVec4(color.x, color.y, color.z, color.w);
 }
 
 void
 transcripts_panel::render() {
 
     if( false == is_open ) { return; }
-    if( true == text_lines.empty() ) { return; }
+    if (this->auto_hide && !ui::Transcripts.HasActiveLines()) { return; }
 
     auto flags =
         ImGuiWindowFlags_NoFocusOnAppearing
         | ImGuiWindowFlags_NoCollapse
+        | ImGuiWindowFlags_MenuBar
         | ( size.x > 0 ? ImGuiWindowFlags_NoResize : 0 );
 
     if( size.x > 0 ) {
@@ -1551,11 +1546,68 @@ transcripts_panel::render() {
 		    m_name :
             title )
 		+ "###" + m_name };
+
     if( true == ImGui::Begin( panelname.c_str(), &is_open, flags ) ) {
-        // header section
-        for( auto const &line : text_lines ) {
-            ImGui::TextWrapped( "%s", line.data.c_str() );
+        // Add a menu bar and a settings menu.
+        if ( ImGui::BeginMenuBar() ) {
+            if ( ImGui::BeginMenu( STR_C("Settings" ) ) ) {
+                ImGui::MenuItem( STR_C( "Show timestamp" ), nullptr, &this->show_timestamps );
+                ImGui::MenuItem( STR_C( "Show history" ), nullptr, &this->show_history );
+                ImGui::MenuItem( STR_C( "Auto hide" ), nullptr, &this->auto_hide );
+                ImGui::EndMenu();
+            }
+
+            // Show the in-game clock on the right side of the menu bar, in green.
+            auto game_time = simulation::Time.to_string();
+            float text_width = ImGui::CalcTextSize( game_time.c_str() ).x;
+            ImGui::SameLine( ImGui::GetWindowContentRegionMax().x - text_width - ImGui::GetStyle().ItemSpacing.x );
+            ImGui::PushStyleColor( ImGuiCol_Text, color_to_imvec4( colors::uitextgreen ) );
+            ImGui::Text( game_time.c_str() );
+            ImGui::PopStyleColor();
+
+            ImGui::EndMenuBar();
+        }
+
+        // Write transcript lines.
+        for( auto const &transcript : ui::Transcripts.aLines ) {
+            // Only show transcripts if they're currently playing, or if we're showing the history.
+            if ( transcript.bActive || this->show_history ) {
+                if ( this->show_timestamps ) {
+                    // Draw timestamp in green.
+                    ImGui::PushStyleColor( ImGuiCol_Text, color_to_imvec4( colors::uitextgreen ) );
+                    ImGui::TextWrapped( "[%s] ", transcript.fTimestamp );
+                    ImGui::SameLine( 0, 0 );
+                    ImGui::PopStyleColor();
+                }
+
+                // Draw caption in white if active, gray if not.
+                ImGui::PushStyleColor( ImGuiCol_Text, color_to_imvec4(transcript.bActive ? colors::white : colors::uitextlightgray ) );
+                ImGui::TextWrapped( "%s", transcript.asText.c_str() );
+                ImGui::PopStyleColor();
+            }
+        }
+
+        // If we were scrolled to the bottom on the previous frame, set the current scroll to the bottom. Note that
+        // getting the scroll seems to use the previous frame's data, whereas setting the scroll will set it for the
+        // current frame. We can take advantage of this to detect whether the user was previously at the bottom,
+        // and scroll to the bottom when new lines are added on this frame.
+        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+            ImGui::SetScrollHereY( 1.0f );
+        } else {
+            // ImGui's GetContentRegionMax() doesn't work properly with scrolling windows and gives negative values for
+            // y once the window starts scrolling, so we'll use the internal InnerRect instead, which reliably gives us
+            // the position of the bottom right corner of the window's inner contents.
+            auto windowSize = ImGui::GetCurrentWindow()->InnerRect;
+            auto buttonPosition = ImVec2( windowSize.Max.x - 40, windowSize.Max.y - 40 );
+            // The position is in screen space, so we need to use SetCursorScreenPos instead of SetCursorPos.
+            ImGui::SetCursorScreenPos( buttonPosition );
+            if ( ImGui::ArrowButton( "TranscriptScrollToBottomButton", ImGuiDir_Down ) ) {
+                // Because we used SetCursorScreenPos, we can't use SetScrollHereY() because it will be relative to the
+                // button position rather than the window, so we'll use SetScrollY(), which is relative to the window.
+                ImGui::SetScrollY( ImGui::GetScrollMaxY() );
+            }
         }
     }
+
     ImGui::End();
 }

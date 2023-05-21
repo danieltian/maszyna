@@ -4,6 +4,9 @@
 #include "Globals.h"
 #include "parser.h"
 #include "utilities.h"
+#include "Logs.h"
+#include "Timer.h"
+#include "simulationtime.h"
 
 namespace ui {
 
@@ -12,29 +15,18 @@ TTranscripts Transcripts;
 // dodanie linii do tabeli, (show) i (hide) w [s] od aktualnego czasu
 void
 TTranscripts::AddLine( std::string const &txt, float show, float hide, bool it ) {
-
     if( show == hide ) { return; } // komentarz jest ignorowany
-
-    // TODO: replace the timeangledeg mess with regular time points math
-    show = Global.fTimeAngleDeg + show / 240.0; // jeśli doba to 360, to 1s będzie równe 1/240
-    hide = Global.fTimeAngleDeg + hide / 240.0;
 
     TTranscript transcript;
     transcript.asText = ExchangeCharInString( txt, '|', ' ' ); // NOTE: legacy transcript lines use | as new line mark
-    transcript.fShow = show;
-    transcript.fHide = hide;
-    transcript.bItalic = it;
-    aLines.emplace_back( transcript );
-    // set the next refresh time while at it
-    // TODO, TBD: sort the transcript lines? in theory, they should be coming arranged in the right order anyway
-    // short of cases with multiple sounds overleaping
-    fRefreshTime = aLines.front().fHide;
+    transcript.fShowTime = Timer::GetTime() + show;
+    transcript.fHideTime = Timer::GetTime() + hide;
+    aQueuedLines.emplace_back( transcript );
 }
 
 // dodanie tekstów, długość dźwięku, czy istotne
 void
-TTranscripts::Add( std::string const &txt, bool backgorund ) {
-
+TTranscripts::Add( std::string const &txt, bool background ) {
     if( true == txt.empty() ) { return; }
 
     std::string asciitext{ txt }; win1250_to_ascii( asciitext ); // TODO: launch relevant conversion table based on language
@@ -62,30 +54,40 @@ TTranscripts::Add( std::string const &txt, bool backgorund ) {
 // usuwanie niepotrzebnych (nie częściej niż 10 razy na sekundę)
 void
 TTranscripts::Update() {
+    for ( size_t i = 0; i < aQueuedLines.size(); i++ ) {
+        auto &transcript = aQueuedLines[i];
 
-    // HACK: detect day change
-    if( fRefreshTime - Global.fTimeAngleDeg > 180 ) {
-        fRefreshTime -= 360;
+        if ( Timer::GetTime() >= transcript.fShowTime ) {
+            transcript.bActive = true;
+            transcript.fTimestamp = simulation::Time.to_string();
+            aLines.emplace_back( transcript );
+            aQueuedLines.erase( aQueuedLines.begin() + i );
+        }
     }
 
-    if( Global.fTimeAngleDeg < fRefreshTime ) { return; } // nie czas jeszcze na zmiany
+    if (!HasActiveLines()) return;
 
-    // remove expired lines
-    while( false == aLines.empty() ) {
-        // HACK: detect day change
-        if( aLines.front().fHide - Global.fTimeAngleDeg > 180 ) {
-            aLines.front().fShow -= 360;
-            aLines.front().fHide -= 360;
+    bool isAllLinesInactive = true;
+
+    for (size_t i = mLastCompleteIndex; i < aLines.size(); i++) {
+        TTranscript &transcript = aLines[i];
+
+        if ( true == transcript.bActive ) {
+            isAllLinesInactive = false;
         }
-        if( Global.fTimeAngleDeg <= aLines.front().fHide ) {
-            // no expired lines yet
-            break;
+        if ( Timer::GetTime() >= transcript.fHideTime ) {
+            aLines[i].bActive = false;
         }
-        aLines.pop_front(); // this line expired, discard it and start anew with the next one
     }
-    // update next refresh time
-    if( false == aLines.empty() ) { fRefreshTime = aLines.front().fHide; }
-    else { fRefreshTime = 360.0f; }
+
+    if ( isAllLinesInactive ) {
+        mLastCompleteIndex = aLines.size();
+    }
+}
+
+bool
+TTranscripts::HasActiveLines()  {
+    return mLastCompleteIndex < aLines.size();
 }
 
 } // namespace ui
