@@ -294,7 +294,6 @@ driver_mode::update() {
         Console::Update(); // to i tak trzeba wywoływać
 #endif
         ui::Transcripts.Update(); // obiekt obsługujący stenogramy dźwięków na ekranie
-        m_userinterface->update();
         // decelerate camera
         Camera.Velocity *= 0.65;
         if( std::abs( Camera.Velocity.x ) < 0.01 ) { Camera.Velocity.x = 0.0; }
@@ -306,56 +305,12 @@ driver_mode::update() {
         if( std::abs( DebugCamera.Velocity.y ) < 0.01 ) { DebugCamera.Velocity.y = 0.0; }
         if( std::abs( DebugCamera.Velocity.z ) < 0.01 ) { DebugCamera.Velocity.z = 0.0; }
 
-        if( false == runonce ) {
-            // tooltip update
-            set_tooltip( "" );
-            auto const *train{ simulation::Train };
-            if( ( train != nullptr ) && ( false == FreeFlyModeFlag ) ) {
-                if( false == DebugModeFlag ) {
-                    // in regular mode show control functions, for defined controls
-                    auto const controlname { train->GetLabel( GfxRenderer->Pick_Control() ) };
-                    if( false == controlname.empty() ) {
-                        auto const mousecommands { m_input.mouse.bindings( controlname ) };
-                        auto inputhints { m_input.binding_hints( mousecommands ) };
-                        // if the commands bound with the control don't have any assigned keys try potential fallbacks
-                        if( inputhints.empty() ) {
-                            inputhints = m_input.binding_hints( m_input.command_fallback( mousecommands.first ) );
-                        }
-                        if( inputhints.empty() ) {
-                            inputhints = m_input.binding_hints( m_input.command_fallback( mousecommands.second ) );
-                        }
-                        // ready or not, here we go
-                        if( inputhints.empty() ) {
-                            set_tooltip( Translations.label_cab_control( controlname ) );
-                        }
-                        else {
-                            set_tooltip(
-                                Translations.label_cab_control( controlname )
-                                + " [" + inputhints + "]" );
-                        }
-                    }
-                }
-                else {
-                    // in debug mode show names of submodels, to help with cab setup and/or debugging
-                    auto const cabcontrol = GfxRenderer->Pick_Control();
-                    set_tooltip( ( cabcontrol ? cabcontrol->pName : "" ) );
-                }
-            }
-            if( ( true == Global.ControlPicking ) && ( true == FreeFlyModeFlag ) && ( true == DebugModeFlag ) ) {
-                auto const scenerynode = GfxRenderer->Pick_Node();
-                set_tooltip(
-                    ( scenerynode ?
-                        scenerynode->name() :
-                        "" ) );
-            }
-
-            runonce = true;
-        }
-
         fTime50Hz -= 1.0 / 50.0;
     }
 
     // variable step render time routines
+    m_userinterface->update(); // Update the UI elements.
+    this->UpdateTooltip(); // Update the tooltip where the mouse cursor is.
 
     update_camera( deltarealtime );
 
@@ -374,6 +329,50 @@ driver_mode::update() {
     simulation::is_ready = simulation::is_ready || ( ( simulation::Train != nullptr ) && ( simulation::Train->is_cab_initialized ) ) || ( Global.local_start_vehicle == "ghostview" );
 
     return true;
+}
+
+void driver_mode::UpdateTooltip() {
+    // Update tooltip.
+    set_tooltip( "" );
+    auto const *train{ simulation::Train };
+    if( ( train != nullptr ) && ( false == FreeFlyModeFlag ) ) {
+        if( false == DebugModeFlag ) {
+            // in regular mode show control functions, for defined controls
+            auto const controlname { train->GetLabel( GfxRenderer->Pick_Control() ) };
+            if( false == controlname.empty() ) {
+                auto const mousecommands { m_input.mouse.bindings( controlname ) };
+                auto inputhints { m_input.binding_hints( mousecommands ) };
+                // if the commands bound with the control don't have any assigned keys try potential fallbacks
+                if( inputhints.empty() ) {
+                    inputhints = m_input.binding_hints( m_input.command_fallback( mousecommands.first ) );
+                }
+                if( inputhints.empty() ) {
+                    inputhints = m_input.binding_hints( m_input.command_fallback( mousecommands.second ) );
+                }
+                // ready or not, here we go
+                if( inputhints.empty() ) {
+                    set_tooltip( Translations.label_cab_control( controlname ) );
+                }
+                else {
+                    set_tooltip(
+                        Translations.label_cab_control( controlname )
+                        + " [" + inputhints + "]" );
+                }
+            }
+        }
+        else {
+            // in debug mode show names of submodels, to help with cab setup and/or debugging
+            auto const cabcontrol = GfxRenderer->Pick_Control();
+            set_tooltip( ( cabcontrol ? cabcontrol->pName : "" ) );
+        }
+    }
+    if( ( true == Global.ControlPicking ) && ( true == FreeFlyModeFlag ) && ( true == DebugModeFlag ) ) {
+        auto const scenerynode = GfxRenderer->Pick_Node();
+        set_tooltip(
+            ( scenerynode ?
+                scenerynode->name() :
+                "" ) );
+    }
 }
 
 // maintenance method, called when the mode is activated

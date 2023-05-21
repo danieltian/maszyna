@@ -107,6 +107,7 @@ private:
     void ExternalView();
     void DistantView( bool const Near = false );
 	void set_picking( bool const Picking );
+    void UpdateTooltip();
 
 // members
     drivermode_input m_input;

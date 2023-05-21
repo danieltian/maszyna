@@ -71,7 +71,6 @@ class ui_log_panel : public ui_panel {
 	void render_contents() override;
 };
 
-class ImFont;
 class ui_layer {
 
 public:
