@@ -122,11 +122,15 @@ drivingaid_panel::update() {
             }
             std::string nextspeedlimittext;
             if( nextspeedlimit != speedlimit ) {
+                auto distanceGreaterThan1Km = nextspeedlimitdistance > 1000;
+
                 std::snprintf(
                     m_buffer.data(), m_buffer.size(),
-				    STR_C(", new limit: %d km/h in %.1f km"),
+				    STR_C(", new limit: %d km/h in %.*f %s"),
                     nextspeedlimit,
-                    nextspeedlimitdistance * 0.001 );
+                    distanceGreaterThan1Km ? 1 : 0, // one decimal place if greater than 1km, no decimal if less
+                    distanceGreaterThan1Km ? nextspeedlimitdistance / 1000 : nextspeedlimitdistance,
+                    distanceGreaterThan1Km ? "km" : "m" );
                 nextspeedlimittext = m_buffer.data();
             }
             // current speed and limit
@@ -623,7 +627,7 @@ debug_panel::render() {
         render_section_settings();
 #ifdef WITH_UART
         if(true == render_section( "UART", m_uartlines)) {
-            int ports_num = UartStatus.available_ports.size();
+            int ports_num = static_cast<int>(UartStatus.available_ports.size());
             char **avlports = new char*[ports_num];
             for (int i=0; i < ports_num; i++) {
                 avlports[i] = (char *) UartStatus.available_ports[i].c_str();
@@ -968,7 +972,7 @@ void debug_panel::graph_data::update(float val) {
 void debug_panel::graph_data::render() {
 	ImGui::PushID(this);
 	ImGui::SliderFloat(STR_C("##Range"), &range, 0.5f, 60.0f, "%.1f");
-	ImGui::PlotLines("##plot", data.data(), data.size(), pos, nullptr, 0.0f, range, ImVec2(0, 100));
+	ImGui::PlotLines("##plot", data.data(), static_cast<int>(data.size()), static_cast<int>(pos), nullptr, 0.0f, range, ImVec2(0, 100));
 	ImGui::PopID();
 }
 
@@ -1484,7 +1488,7 @@ debug_panel::render_section_settings() {
     // reflection fidelity
     ImGui::SliderInt( ( to_string( Global.reflectiontune.fidelity ) + "###reflectionfidelity" ).c_str(), &Global.reflectiontune.fidelity, 0, 2, "Reflection fidelity" );
     ImGui::SliderInt( ( to_string( Global.gfx_shadow_rank_cutoff ) + "###shadowrankcutoff" ).c_str(), &Global.gfx_shadow_rank_cutoff, 1, 3, "Shadow ranks" );
-    if( ImGui::SliderFloat( ( to_string( std::abs( Global.gfx_shadow_angle_min ), 2 ) + "###shadowanglecutoff" ).c_str(), &Global.gfx_shadow_angle_min, -1.0, -0.2, "Shadow angle cutoff" ) ) {
+    if( ImGui::SliderFloat( ( to_string( std::abs( Global.gfx_shadow_angle_min ), 2 ) + "###shadowanglecutoff" ).c_str(), &Global.gfx_shadow_angle_min, -1.0f, -0.2f, "Shadow angle cutoff" ) ) {
         Global.gfx_shadow_angle_min = quantize( Global.gfx_shadow_angle_min, 0.05f );
     };
     if( DebugModeFlag ) {
