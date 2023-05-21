@@ -12,6 +12,7 @@ http://mozilla.org/MPL/2.0/.
 
 #include "Model3d.h"
 #include "renderer.h"
+#include "parser.h"
 #include "Logs.h"
 #include "sn_utils.h"
 
@@ -71,7 +72,7 @@ shape_node::shapenode_data::serialize( std::ostream &Output ) const {
     sn_utils::s_str(
         Output,
         ( material != null_handle ?
-            GfxRenderer.Material( material ).name :
+            GfxRenderer->Material( material ).name :
             "" ) );
     lighting.serialize( Output );
     // geometry
@@ -101,7 +102,7 @@ shape_node::shapenode_data::deserialize( std::istream &Input ) {
     translucent = sn_utils::d_bool( Input );
     auto const materialname { sn_utils::d_str( Input ) };
     if( false == materialname.empty() ) {
-        material = GfxRenderer.Fetch_Material( materialname );
+        material = GfxRenderer->Fetch_Material( materialname );
     }
     lighting.deserialize( Input );
     // geometry
@@ -190,31 +191,32 @@ shape_node::import( cParser &Input, scene::node_data const &Nodedata ) {
     }
 
     // assigned material
-    m_data.material = GfxRenderer.Fetch_Material( token );
+	replace_slashes(token);
+	m_data.material = GfxRenderer->Fetch_Material( token );
 
     // determine way to proceed from the assigned diffuse texture
     // TBT, TODO: add methods to material manager to access these simpler
     auto const texturehandle = (
         m_data.material != null_handle ?
-            GfxRenderer.Material( m_data.material ).texture1 :
+            GfxRenderer->Material( m_data.material ).textures[0] :
             null_handle );
     auto const &texture = (
         texturehandle ?
-            GfxRenderer.Texture( texturehandle ) :
+            GfxRenderer->Texture( texturehandle ) :
             opengl_texture() ); // dirty workaround for lack of better api
     bool const clamps = (
         texturehandle ?
-            texture.traits.find( 's' ) != std::string::npos :
+            contains( texture.traits, 's' ) :
             false );
     bool const clampt = (
         texturehandle ?
-            texture.traits.find( 't' ) != std::string::npos :
+            contains( texture.traits, 't' ) :
             false );
 
     // remainder of legacy 'problend' system -- geometry assigned a texture with '@' in its name is treated as translucent, opaque otherwise
     if( texturehandle != null_handle ) {
         m_data.translucent = (
-            ( ( texture.name.find( '@' ) != std::string::npos )
+            ( ( contains( texture.name, '@' ) )
            && ( true == texture.has_alpha ) ) ?
                 true :
                 false );
@@ -342,16 +344,16 @@ shape_node::convert( TSubModel const *Submodel ) {
     m_data.lighting.diffuse = Submodel->f4Diffuse;
     m_data.lighting.specular = Submodel->f4Specular;
     m_data.material = Submodel->m_material;
-    m_data.translucent = ( true == GfxRenderer.Material( m_data.material ).has_alpha );
+    m_data.translucent = ( GfxRenderer->Material( m_data.material ).get_or_guess_opacity() == 0.0f );
     // NOTE: we set unlimited view range typical for terrain, because we don't expect to convert any other 3d models
     m_data.rangesquared_max = std::numeric_limits<double>::max();
 
-    if( Submodel->m_geometry == null_handle ) { return *this; }
+    if( Submodel->m_geometry.handle == null_handle ) { return *this; }
 
     int vertexcount { 0 };
     std::vector<world_vertex> importedvertices;
     world_vertex vertex, vertex1, vertex2;
-    for( auto const &sourcevertex : GfxRenderer.Vertices( Submodel->m_geometry ) ) {
+    for( auto const &sourcevertex : GfxRenderer->Vertices( Submodel->m_geometry.handle ) ) {
         vertex.position = sourcevertex.position;
         vertex.normal   = sourcevertex.normal;
         vertex.texture  = sourcevertex.texture;
@@ -426,7 +428,7 @@ shape_node::create_geometry( gfx::geometrybank_handle const &Bank ) {
             vertex.normal,
             vertex.texture );
     }
-    m_data.geometry = GfxRenderer.Insert( vertices, Bank, GL_TRIANGLES );
+    m_data.geometry = GfxRenderer->Insert( vertices, Bank, GL_TRIANGLES );
     std::vector<world_vertex>().swap( m_data.vertices ); // hipster shrink_to_fit
 }
 
@@ -655,7 +657,7 @@ lines_node::create_geometry( gfx::geometrybank_handle const &Bank ) {
             vertex.normal,
             vertex.texture );
     }
-    m_data.geometry = GfxRenderer.Insert( vertices, Bank, GL_LINES );
+    m_data.geometry = GfxRenderer->Insert( vertices, Bank, GL_LINES );
     std::vector<world_vertex>().swap( m_data.vertices ); // hipster shrink_to_fit
 }
 
@@ -745,7 +747,7 @@ basic_node::export_as_text( std::ostream &Output ) const {
         << ' ' << ( m_rangesquaredmax < std::numeric_limits<double>::max() ? std::sqrt( m_rangesquaredmax ) : -1 )
         << ' ' << std::sqrt( m_rangesquaredmin )
         // name
-        << ' ' << m_name << ' ';
+        << ' ' << ( m_name.empty() ? "none" : m_name ) << ' ';
     // template method implementation
     export_as_text_( Output );
 }

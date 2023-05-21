@@ -1,1 +1,0 @@
-#define VERSION_INFO "M7 15.09.2019"

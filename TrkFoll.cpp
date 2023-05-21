@@ -38,6 +38,12 @@ bool TTrackFollower::Init(TTrack *pTrack, TDynamicObject *NewOwner, double fDir)
     return true;
 }
 
+void TTrackFollower::Reset()
+{
+	fCurrentDistance = 0.0;
+	fDirection = 1.0;
+}
+
 TTrack * TTrackFollower::SetCurrentTrack(TTrack *pTrack, int end)
 { // przejechanie na inny odcinkek toru, z ewentualnym rozpruciem
     if (pTrack)
@@ -244,7 +250,7 @@ bool TTrackFollower::Move(double fDistance, bool bPrimary)
         { // gdy zostaje na tym samym torze (przesuwanie już nie zmienia toru)
             if (bPrimary)
             { // tylko gdy początkowe ustawienie, dodajemy eventy stania do kolejki
-                if (Owner->MoverParameters->CabNo != 0) {
+                if (Owner->MoverParameters->CabOccupied != 0) {
 
                     pCurrentTrack->QueueEvents( pCurrentTrack->m_events1, Owner, -1.0 );
                     pCurrentTrack->QueueEvents( pCurrentTrack->m_events2, Owner, -1.0 );
@@ -277,21 +283,3 @@ bool TTrackFollower::ComputatePosition()
     }
     return false;
 }
-#if RENDER_CONE
-#include "GL/glew.h"
-#include "GL/glut.h"
-void TTrackFollower::Render(float fNr)
-{ // funkcja rysująca stożek w miejscu osi
-    glPushMatrix(); // matryca kamery
-    glTranslatef(pPosition.x, pPosition.y + 6, pPosition.z); // 6m ponad
-    glRotated(RadToDeg(-vAngles.z), 0, 1, 0); // obrót względem osi OY
-    // glRotated(RadToDeg(vAngles.z),0,1,0); //obrót względem osi OY
-    glDisable(GL_LIGHTING);
-    glColor3f(1.0, 1.0 - fNr, 1.0 - fNr); // biały dla 0, czerwony dla 1
-    // glutWireCone(promień podstawy,wysokość,kątność podstawy,ilość segmentów na wysokość)
-    glutWireCone(0.5, 2, 4, 1); // rysowanie stożka (ostrosłupa o podstawie wieloboka)
-    glEnable(GL_LIGHTING);
-    glPopMatrix();
-}
-#endif
-//---------------------------------------------------------------------------

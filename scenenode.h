@@ -14,7 +14,7 @@ http://mozilla.org/MPL/2.0/.
 #include "Classes.h"
 #include "material.h"
 #include "vertex.h"
-#include "openglgeometrybank.h"
+#include "geometrybank.h"
 
 struct lighting_data {
 
@@ -75,7 +75,8 @@ struct node_data {
 };
 
 // holds unique piece of geometry, covered with single material
-class shape_node {
+class shape_node
+{
 
     friend class basic_region; // region might want to modify node content when it's being inserted
 
@@ -171,8 +172,8 @@ shape_node::data() const {
 
 
 // holds a group of untextured lines
-class lines_node {
-
+class lines_node
+{
     friend class basic_region; // region might want to modify node content when it's being inserted
 
 public:
@@ -332,6 +333,8 @@ public:
         location( glm::dvec3 const Location );
     glm::dvec3 const &
         location() const;
+	glm::dvec3 &
+	    location();
     float const &
         radius();
     void
@@ -342,6 +345,10 @@ public:
         group( scene::group_handle Group );
     scene::group_handle
         group() const;
+	void
+	    mark_dirty() { m_dirty = true; }
+	bool
+	    dirty() const { return m_dirty; }
 
 protected:
 // members
@@ -351,6 +358,7 @@ protected:
     double m_rangesquaredmax { 0.0 }; // visibility range, max
     bool m_visible { true }; // visibility flag
     std::string m_name;
+	bool m_dirty { false };
 
 private:
 // methods
@@ -380,6 +388,12 @@ inline
 glm::dvec3 const &
 basic_node::location() const {
     return m_area.center;
+}
+
+inline
+glm::dvec3 &
+basic_node::location() {
+	return m_area.center;
 }
 
 inline

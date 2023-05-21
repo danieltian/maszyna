@@ -20,6 +20,7 @@ http://mozilla.org/MPL/2.0/.
 #include "Logs.h"
 #include "sn_utils.h"
 #include "renderer.h"
+#include "widgets/map_objects.h"
 
 namespace scene {
 
@@ -35,7 +36,7 @@ basic_cell::on_click( TAnimModel const *Instance ) {
         if( ( launcher->name() == Instance->name() )
          && ( glm::length2( launcher->location() - Instance->location() ) < launcher->dRadius )
          && ( true == launcher->check_conditions() ) ) {
-            launch_event( launcher );
+            launch_event( launcher, true );
         }
     }
 }
@@ -81,15 +82,15 @@ basic_cell::update_traction( TDynamicObject *Vehicle, int const Pantographindex 
                 // i do tego jeszcze wejdzie pod ślizg
                 if( fHorizontal <= 0.0 ) {
                     // 0.635 dla AKP-1 AKP-4E
+                    SetFlag( Vehicle->MoverParameters->DamageFlag, dtrain_pantograph );
                     pantograph->PantWys = -1.0; // ujemna liczba oznacza połamanie
                     pantograph->hvPowerWire = nullptr; // bo inaczej się zasila w nieskończoność z połamanego
                     if( Vehicle->MoverParameters->EnginePowerSource.CollectorParameters.CollectorsNo > 0 ) {
                         // liczba pantografów teraz będzie mniejsza
                         --Vehicle->MoverParameters->EnginePowerSource.CollectorParameters.CollectorsNo;
                     }
-                    if( DebugModeFlag ) {
-                        ErrorLog( "Bad traction: " + Vehicle->name() + " broke pantograph at " + to_string( pantographposition ) );
-                    }
+                    ErrorLog( "Bad traction: " + Vehicle->name() + " broke pantograph at " + to_string( pantographposition ), logtype::traction );
+
                 }
             }
             else if( fVertical < pantograph->PantTraction ) {
@@ -123,11 +124,20 @@ basic_cell::update_events() {
 
     // event launchers
     for( auto *launcher : m_eventlaunchers ) {
-        if( ( true == ( launcher->check_activation() && launcher->check_conditions() ) )
-         && ( ( launcher->dRadius < 0.0 )
-           || ( SquareMagnitude( launcher->location() - Global.pCamera.Pos ) < launcher->dRadius ) ) ) {
+        glm::dvec3 campos = Global.pCamera.Pos;
+        double radius = launcher->dRadius;
+        if (launcher->train_triggered && simulation::Train) {
+            campos = simulation::Train->Dynamic()->HeadPosition();
+            radius *= Timer::GetDeltaTime() * simulation::Train->Dynamic()->GetVelocity() * 0.277;
+        }
 
-            launch_event( launcher );
+        if( launcher->check_conditions()
+            && ( radius < 0.0
+                || glm::distance2( launcher->location(), campos ) < launcher->dRadius ) ) {
+            if( launcher->check_activation() )
+                launch_event( launcher, true );
+            if( launcher->check_activation_key() )
+                launch_event( launcher, true );
         }
     }
 }
@@ -606,18 +616,58 @@ basic_cell::create_geometry( gfx::geometrybank_handle const &Bank ) {
     m_geometrycreated = true; // helper for legacy animation code, get rid of it after refactoring
 }
 
+void basic_cell::create_map_geometry(std::vector<gfx::basic_vertex> &Bank, const gfx::geometrybank_handle Extra)
+{
+    if (!m_active)
+        return;
+
+    for (auto *path : m_paths)
+		path->create_map_geometry(Bank, Extra);
+}
+
+void basic_cell::get_map_active_paths(map_colored_paths &handles)
+{
+	for (auto *path : m_paths)
+		path->get_map_active_paths(handles);
+}
+
+glm::vec3 basic_cell::find_nearest_track_point(const glm::dvec3 &pos)
+{
+	float min = std::numeric_limits<float>::max();
+	TTrack *nearest = nullptr;
+	glm::vec3 point;
+
+	for (auto *path : m_paths) {
+		glm::dvec3 ep = path->get_nearest_point(pos);
+
+		float dist2 = glm::distance2(ep, pos);
+		if (dist2 < min) {
+			point = ep;
+			min = dist2;
+			nearest = path;
+		}
+	}
+
+	if (!nearest)
+		return glm::vec3(NAN);
+	return point;
+}
+
 // executes event assigned to specified launcher
 void
-basic_cell::launch_event( TEventLauncher *Launcher ) {
-
-    WriteLog( "Eventlauncher " + Launcher->name() );
-    if( ( true == Global.shiftState )
-     && ( Launcher->Event2 != nullptr ) ) {
-        simulation::Events.AddToQuery( Launcher->Event2, nullptr );
-    }
-    else if( Launcher->Event1 ) {
-        simulation::Events.AddToQuery( Launcher->Event1, nullptr );
-    }
+basic_cell::launch_event( TEventLauncher *Launcher, bool local_only ) {
+	WriteLog( "Eventlauncher: " + Launcher->name() );
+	if (!local_only) {
+		if( Launcher->Event1 ) {
+			simulation::Events.AddToQuery( Launcher->Event1, nullptr );
+		}
+	} else {
+        command_relay commandrelay;
+        if (Global.shiftState && Launcher->Event2 != nullptr)
+			commandrelay.post(user_command::queueevent, 0.0, 0.0, GLFW_PRESS, 0, glm::vec3(0.0f), &Launcher->Event2->name());
+		else if (Launcher->Event1)
+			commandrelay.post(user_command::queueevent, 0.0, 0.0, GLFW_PRESS, 0, glm::vec3(0.0f), &Launcher->Event1->name());
+	}
 }
 
 // adjusts cell bounding area to enclose specified node
@@ -763,7 +813,7 @@ basic_section::insert( shape_node Shape ) {
     // re-calculate section radius, in case shape geometry extends outside the section's boundaries
     m_area.radius = std::max<float>(
         m_area.radius,
-        static_cast<float>( glm::length( m_area.center - shapedata.area.center ) + Shape.radius() ) );
+	    static_cast<float>( glm::length( m_area.center - shapedata.area.center ) + Shape.radius() ) );
 
     if( ( true == shapedata.translucent )
      || ( shapedata.rangesquared_max <= 90000.0 )
@@ -898,7 +948,7 @@ basic_section::create_geometry() {
 
     // since sections can be empty, we're doing lazy initialization of the geometry bank, when something may actually use it
     if( m_geometrybank == null_handle ) {
-        m_geometrybank = GfxRenderer.Create_Bank();
+        m_geometrybank = GfxRenderer->Create_Bank();
     }
 
     for( auto &shape : m_shapes ) {
@@ -909,12 +959,45 @@ basic_section::create_geometry() {
     }
 }
 
+void basic_section::create_map_geometry(const gfx::geometrybank_handle handle)
+{
+    std::vector<gfx::basic_vertex> lines;
+    for (auto &cell : m_cells)
+		cell.create_map_geometry(lines, handle);
+
+    m_map_geometryhandle = GfxRenderer->Insert(lines, handle, GL_LINES);
+}
+
+void basic_section::get_map_active_paths(map_colored_paths &handles)
+{
+	for (auto &cell : m_cells)
+		cell.get_map_active_paths(handles);
+}
+
+glm::vec3 basic_section::find_nearest_track_point(const glm::dvec3 &point)
+{
+	glm::vec3 nearest(NAN);
+	float min = std::numeric_limits<float>::max();
+
+	for (int x = -1; x < 2; x++)
+		for (int y = -1; y < 2; y++) {
+			glm::vec3 p = cell(point, glm::ivec2(x, y)).find_nearest_track_point(point);
+			float dist2 = glm::distance2(p, (glm::vec3)point);
+			if (dist2 < min) {
+				min = dist2;
+				nearest = p;
+			}
+		}
+
+	return nearest;
+}
+
 // provides access to section enclosing specified point
 basic_cell &
-basic_section::cell( glm::dvec3 const &Location ) {
+basic_section::cell( glm::dvec3 const &Location, const glm::ivec2 &offset ) {
 
-    auto const column = static_cast<int>( std::floor( ( Location.x - ( m_area.center.x - EU07_SECTIONSIZE / 2 ) ) / EU07_CELLSIZE ) );
-    auto const row = static_cast<int>( std::floor( ( Location.z - ( m_area.center.z - EU07_SECTIONSIZE / 2 ) ) / EU07_CELLSIZE ) );
+	auto const column = static_cast<int>( std::floor( ( Location.x - ( m_area.center.x - EU07_SECTIONSIZE / 2 ) ) / EU07_CELLSIZE ) ) + offset.x;
+	auto const row = static_cast<int>( std::floor( ( Location.z - ( m_area.center.z - EU07_SECTIONSIZE / 2 ) ) / EU07_CELLSIZE ) ) + offset.y;
 
     return
         m_cells[
@@ -1182,9 +1265,9 @@ basic_region::insert( shape_node Shape, scratch_data &Scratchpad, bool const Tra
 
     if( Global.CreateSwitchTrackbeds ) {
 
-        auto const materialname{ GfxRenderer.Material( Shape.data().material ).name };
+        auto const materialname{ GfxRenderer->Material( Shape.data().material ).name };
         for( auto const &switchtrackbedtexture : switchtrackbedtextures ) {
-            if( materialname.find( switchtrackbedtexture ) != std::string::npos ) {
+            if( contains( materialname, switchtrackbedtexture ) ) {
                 // geometry with blacklisted texture, part of old switch trackbed; ignore it
                 return;
             }
@@ -1625,6 +1708,34 @@ basic_region::section( glm::dvec3 const &Location ) {
     }
 
     return *section;
+}
+
+void basic_region::create_map_geometry()
+{
+    m_map_geometrybank = GfxRenderer->Create_Bank();
+
+    for (int row = 0; row < EU07_REGIONSIDESECTIONCOUNT; row++)
+        for (int column = 0; column < EU07_REGIONSIDESECTIONCOUNT; column++)
+        {
+            basic_section *s = m_sections[row * EU07_REGIONSIDESECTIONCOUNT + column];
+            if (s)
+                s->create_map_geometry(m_map_geometrybank);
+        }
+}
+
+void basic_region::update_poi_geometry()
+{
+	std::vector<gfx::basic_vertex> vertices;
+	for (const auto sem : map::Objects.entries)
+		vertices.push_back(std::move(sem->vertex()));
+
+	if (!m_map_poipoints) {
+        gfx::geometrybank_handle poibank = GfxRenderer->Create_Bank();
+        m_map_poipoints = GfxRenderer->Insert(vertices, poibank, GL_POINTS);
+	}
+	else {
+        GfxRenderer->Replace(vertices, m_map_poipoints, GL_POINTS);
+	}
 }
 
 } // scene

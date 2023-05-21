@@ -19,6 +19,7 @@ http://mozilla.org/MPL/2.0/.
 #include "Timer.h"
 #include "Console.h"
 #include "renderer.h"
+#include "AnimModel.h"
 
 bool
 editor_mode::editormode_input::init() {
@@ -82,7 +83,7 @@ editor_mode::update() {
     simulation::Region->update_sounds();
     audio::renderer.update( Global.iPause ? 0.0 : deltarealtime );
 
-    GfxRenderer.Update( deltarealtime );
+    GfxRenderer->Update( deltarealtime );
 
     simulation::is_ready = true;
 
@@ -106,8 +107,26 @@ editor_mode::enter() {
 
     m_statebackup = { Global.pCamera, FreeFlyModeFlag, Global.ControlPicking };
 
-    Global.pCamera = Camera;
-    FreeFlyModeFlag = true;
+    Camera = Global.pCamera;
+    // NOTE: camera placement is effectively a copy of drivermode DistantView( true )
+    // TBD, TODO: refactor into a common vehicle method?
+    if( false == FreeFlyModeFlag ) {
+
+        auto const *vehicle { Camera.m_owner };
+        auto const cab {
+            ( vehicle->MoverParameters->CabOccupied == 0 ?
+                1 :
+                vehicle->MoverParameters->CabOccupied ) };
+        auto const left { vehicle->VectorLeft() * cab };
+        Camera.Pos =
+            Math3D::vector3( Camera.Pos.x, vehicle->GetPosition().y, Camera.Pos.z )
+            + left * vehicle->GetWidth()
+            + Math3D::vector3( 1.25 * left.x, 1.6, 1.25 * left.z );
+        Camera.m_owner = nullptr;
+        Camera.LookAt = vehicle->GetPosition();
+        Camera.RaLook(); // jednorazowe przestawienie kamery
+        FreeFlyModeFlag = true;
+    }
     Global.ControlPicking = true;
     EditorModeFlag = true;
 
@@ -140,8 +159,10 @@ editor_mode::on_key( int const Key, int const Scancode, int const Action, int co
     Global.ctrlState = ( Mods & GLFW_MOD_CONTROL ) ? true : false;
     Global.altState = ( Mods & GLFW_MOD_ALT ) ? true : false;
 
+    bool anyModifier = Mods & (GLFW_MOD_SHIFT | GLFW_MOD_CONTROL | GLFW_MOD_ALT);
+
     // give the ui first shot at the input processing...
-    if( true == m_userinterface->on_key( Key, Action ) ) { return; }
+    if( !anyModifier && true == m_userinterface->on_key( Key, Action ) ) { return; }
     // ...if the input is left untouched, pass it on
     if( true == m_input.keyboard.key( Key, Action ) ) { return; }
 
@@ -177,6 +198,22 @@ editor_mode::on_key( int const Key, int const Scancode, int const Action, int co
             break;
         }
 
+        // TODO: ensure delete method can play nice with history stack
+	    case GLFW_KEY_DELETE: {
+		    TAnimModel *model = dynamic_cast<TAnimModel*>(m_node);
+			if (!model)
+				break;
+
+			m_node = nullptr;
+			m_dragging = false;
+			Application.set_cursor( GLFW_CURSOR_NORMAL );
+			static_cast<editor_ui*>( m_userinterface.get() )->set_node(nullptr);
+
+			simulation::State.delete_model(model);
+
+			break;
+	    }
+
         default: {
             break;
         }
@@ -205,7 +242,7 @@ editor_mode::on_cursor_pos( double const Horizontal, double const Vertical ) {
             m_editor.translate( m_node, translation );
         }
         else {
-            auto const mouseworldposition { Camera.Pos + GfxRenderer.Mouse_Position() };
+            auto const mouseworldposition { Camera.Pos + GfxRenderer->Mouse_Position() };
             m_editor.translate( m_node, mouseworldposition, mode_snap() );
         }
     }
@@ -221,6 +258,8 @@ editor_mode::on_cursor_pos( double const Horizontal, double const Vertical ) {
 
 }
 
+/*
+TODO: re-enable in post-merge cleanup
 void
 editor_mode::on_mouse_button( int const Button, int const Action, int const Mods ) {
 
@@ -228,17 +267,95 @@ editor_mode::on_mouse_button( int const Button, int const Action, int const Mods
 
         if( Action == GLFW_PRESS ) {
             // left button press
-            m_node = GfxRenderer.Update_Pick_Node();
-            if( m_node ) {
-                Application.set_cursor( GLFW_CURSOR_DISABLED );
-            }
-            dynamic_cast<editor_ui*>( m_userinterface.get() )->set_node( m_node );
+            m_node = nullptr;
+            GfxRenderer->Pick_Node_Callback(
+                [ this ]( scene::basic_node *node ) {
+                    m_node = node;
+                    if( m_node ) {
+                        Application.set_cursor( GLFW_CURSOR_DISABLED );
+                    }
+                    dynamic_cast<editor_ui*>( m_userinterface.get() )->set_node( m_node ); } );
         }
         else {
             // left button release
-            if( m_node ) {
+            if( m_node )
                 Application.set_cursor( GLFW_CURSOR_NORMAL );
-            }
+            m_dragging = false;
+            // prime history stack for another snapshot
+            m_takesnapshot = true;
+        }
+    }
+
+    m_input.mouse.button( Button, Action );
+}
+*/
+void
+editor_mode::on_mouse_button( int const Button, int const Action, int const Mods ) {
+
+    // give the ui first shot at the input processing...
+    if( true == m_userinterface->on_mouse_button( Button, Action ) ) { return; }
+
+    if( Button == GLFW_MOUSE_BUTTON_LEFT ) {
+
+        if( Action == GLFW_PRESS ) {
+			// left button press
+			auto const mode = static_cast<editor_ui*>( m_userinterface.get() )->mode();
+
+			m_node = nullptr;
+
+			GfxRenderer->Pick_Node_Callback([this, mode](scene::basic_node *node)
+			{
+				editor_ui *ui = static_cast<editor_ui*>( m_userinterface.get() );
+
+				if (mode == nodebank_panel::MODIFY) {
+					if (!m_dragging)
+						return;
+
+					m_node = node;
+					if( m_node )
+						Application.set_cursor( GLFW_CURSOR_DISABLED );
+					else
+						m_dragging = false;
+					ui->set_node( m_node );
+				}
+				else if (mode == nodebank_panel::COPY) {
+					if (node && typeid(*node) == typeid(TAnimModel)) {
+						std::string as_text;
+						node->export_as_text(as_text);
+
+						ui->add_node_template(as_text);
+					}
+
+					m_dragging = false;
+				}
+				else if (mode == nodebank_panel::ADD) {
+					const std::string *src = ui->get_active_node_template();
+					std::string name =  "editor_" + std::to_string(LocalRandom(0.0, 100000.0));
+
+					if (!src)
+						return;
+
+					TAnimModel *cloned = simulation::State.create_model(*src, name, Camera.Pos + GfxRenderer->Mouse_Position());
+
+					if (!cloned)
+						return;
+
+					if (!m_dragging)
+						return;
+
+					m_node = cloned;
+					Application.set_cursor( GLFW_CURSOR_DISABLED );
+					ui->set_node( m_node );
+				}
+			});
+
+			m_dragging = true;
+        }
+        else {
+            // left button release
+            if( m_node )
+                Application.set_cursor( GLFW_CURSOR_NORMAL );
+            m_dragging = false;
             // prime history stack for another snapshot
             m_takesnapshot = true;
         }
@@ -251,6 +368,12 @@ void
 editor_mode::on_event_poll() {
 
     m_input.poll();
+}
+
+bool
+editor_mode::is_command_processor() const {
+
+    return false;
 }
 
 bool

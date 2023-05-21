@@ -11,8 +11,15 @@ http://mozilla.org/MPL/2.0/.
 
 #include "Classes.h"
 #include "dumb3d.h"
-#include "openglgeometrybank.h"
+#include "geometrybank.h"
 #include "utilities.h"
+
+struct map_colored_paths {
+	std::vector<gfx::geometrybank_handle> switches;
+	std::vector<gfx::geometrybank_handle> occupied;
+	std::vector<gfx::geometrybank_handle> future;
+    std::vector<gfx::geometrybank_handle> highlighted;
+};
 
 struct segment_data {
 // types
@@ -129,6 +136,12 @@ public:
     int
         RaSegCount() const {
             return ( fTsBuffer.empty() ? 1 : iSegCount ); };
+
+	void
+	    render_lines(std::vector<gfx::basic_vertex> &out, float quality = 1.0f) const;
+
+	glm::vec3
+	    get_nearest_point(const glm::dvec3 &point, float quality = 1.0f) const;
 };
 
 //---------------------------------------------------------------------------

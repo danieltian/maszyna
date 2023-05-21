@@ -1,8 +1,6 @@
 #pragma once
 
-//#include "windows.h"
-#include "GL/glew.h"
-
+#include "winheaders.h"
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // cSun -- class responsible for dynamic calculation of position and intensity of the Sun,
@@ -24,7 +22,7 @@ public:
 	// returns vector pointing at the sun
 	glm::vec3 getDirection();
 	// returns current elevation above horizon
-	float getAngle();
+	float getAngle() const;
     // return current hour angle
     double getHourAngle() const;
     // returns current intensity of the sun
@@ -58,7 +56,6 @@ protected:
 	void irradiance();
 
 // members:
-	GLUquadricObj *sunsphere;	// temporary handler for sun positioning test
 
 	struct celestialbody {	// main planet parameters
 

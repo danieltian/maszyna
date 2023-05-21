@@ -15,7 +15,9 @@ cMoon::cMoon() {
 	m_observer.temp = 15.0;							// ambient dry-bulb temperature, degrees C
 }
 
-cMoon::~cMoon() { gluDeleteQuadric( moonsphere ); }
+cMoon::~cMoon() {
+
+}
 
 void
 cMoon::init() {
@@ -24,17 +26,15 @@ cMoon::init() {
     // NOTE: we're calculating phase just once, because it's unlikely simulation will last a few days,
     // plus a sudden texture change would be pretty jarring
     phase();
-
-    moonsphere = gluNewQuadric();
-    gluQuadricNormals( moonsphere, GLU_SMOOTH );
 }
 
 void
-cMoon::update() {
+cMoon::update( bool const Includephase ) {
 
     m_observer.temp = Global.AirTemperature;
 
     move();
+    if( Includephase ) { phase(); }
     glm::vec3 position( 0.f, 0.f, -1.f );
     position = glm::rotateX( position, glm::radians( static_cast<float>( m_body.elevref ) ) );
     position = glm::rotateY( position, glm::radians( static_cast<float>( -m_body.hrang ) ) );
@@ -45,17 +45,7 @@ cMoon::update() {
 void
 cMoon::render() {
 
-    ::glColor4f( 225.f / 255.f, 225.f / 255.f, 255.f / 255.f, 1.f );
-	// debug line to locate the moon easier
-    auto const position { m_position * 2000.f };
-    ::glBegin( GL_LINES );
-    ::glVertex3fv( glm::value_ptr( position ) );
-    ::glVertex3f( position.x, 0.f, position.z );
-    ::glEnd();
-    ::glPushMatrix();
-    ::glTranslatef( position.x, position.y, position.z );
-    ::gluSphere( moonsphere, /* (float)( Global.iWindowHeight / Global.FieldOfView ) * 0.5 * */ ( m_body.distance / 60.2666 ) * 9.037461, 12, 12 );
-	::glPopMatrix();
+    //m7t
 }
 
 glm::vec3
@@ -304,10 +294,14 @@ void cMoon::irradiance() {
 
 void
 cMoon::phase() {
-
-    // calculate moon's age in days from new moon
-    float ip = normalize( ( simulation::Time.julian_day() - 2451550.1f ) / 29.530588853f );
-    m_phase = ip * 29.53f;
+    SYSTEMTIME lt = simulation::Time.data();
+	if ((lt.wMonth==5)&&(lt.wDay==4)) //May the forth be with you!
+		m_phase = 50;
+	else {
+		// calculate moon's age in days from new moon
+		float ip = normalize( ( simulation::Time.julian_day() - 2451550.1f ) / 29.530588853f );
+		m_phase = ip * 29.53f;
+	}
 }
 
 // normalize values to range 0...1

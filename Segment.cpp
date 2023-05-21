@@ -12,6 +12,7 @@ http://mozilla.org/MPL/2.0/.
 
 #include "Globals.h"
 #include "Logs.h"
+#include "parser.h"
 #include "utilities.h"
 #include "Track.h"
 #include "renderer.h"
@@ -430,10 +431,12 @@ bool TSegment::RenderLoft( gfx::vertex_array &Output, Math3D::vector3 const &Ori
             m2 = 1.f;
             jmm2 = 0.f;
         }
-
+/*
         while( tv1 < 0.0 ) {
             tv1 += 1.0;
         }
+*/
+        tv1 = clamp_circular( tv1, 1.0f );
         tv2 = tv1 - step / texturelength; // mapowanie na końcu segmentu
 
         t = fTsBuffer[ i ]; // szybsze od GetTFromS(s);
@@ -520,54 +523,55 @@ bool TSegment::RenderLoft( gfx::vertex_array &Output, Math3D::vector3 const &Ori
     }
     return true;
 };
-/*
-// NOTE: legacy leftover, potentially usable (but not really)
-void TSegment::Render()
+
+void TSegment::render_lines(std::vector<gfx::basic_vertex> &out, float quality) const
 {
-    Math3D::vector3 pt;
-    GfxRenderer.Bind_Material( null_handle );
+	float step = 1.0f / iSegCount / quality;
 
-    if (bCurve)
-    {
-        glColor3f(0, 0, 1.0f);
-        glBegin(GL_LINE_STRIP);
-        glVertex3f(Point1.x, Point1.y, Point1.z);
-        glVertex3f(CPointOut.x, CPointOut.y, CPointOut.z);
-        glEnd();
+	float x;
 
-        glBegin(GL_LINE_STRIP);
-        glVertex3f(Point2.x, Point2.y, Point2.z);
-        glVertex3f(CPointIn.x, CPointIn.y, CPointIn.z);
-        glEnd();
+	glm::vec3 previous = FastGetPoint(0.0);
 
-        glColor3f(1.0f, 0, 0);
-        glBegin(GL_LINE_STRIP);
-        for (int i = 0; i <= 8; i++)
-        {
-            pt = FastGetPoint(double(i) / 8.0f);
-            glVertex3f(pt.x, pt.y, pt.z);
-        }
-        glEnd();
-    }
-    else
-    {
-        glColor3f(0, 0, 1.0f);
-        glBegin(GL_LINE_STRIP);
-        glVertex3f(Point1.x, Point1.y, Point1.z);
-        glVertex3f(Point1.x + CPointOut.x, Point1.y + CPointOut.y, Point1.z + CPointOut.z);
-        glEnd();
+	for (x = step; x <= 1.0f; x += step) {
+		out.push_back(gfx::basic_vertex(previous, glm::vec3(0.0f), glm::vec2(0.0f)));
 
-        glBegin(GL_LINE_STRIP);
-        glVertex3f(Point2.x, Point2.y, Point2.z);
-        glVertex3f(Point2.x + CPointIn.x, Point2.y + CPointIn.y, Point2.z + CPointIn.z);
-        glEnd();
+		previous = glm::vec3(FastGetPoint(x));
+		out.push_back(gfx::basic_vertex(previous, glm::vec3(0.0f), glm::vec2(0.0f)));
+	}
 
-        glColor3f(0.5f, 0, 0);
-        glBegin(GL_LINE_STRIP);
-        glVertex3f(Point1.x + CPointOut.x, Point1.y + CPointOut.y, Point1.z + CPointOut.z);
-        glVertex3f(Point2.x + CPointIn.x, Point2.y + CPointIn.y, Point2.z + CPointIn.z);
-        glEnd();
-    }
+	out.push_back(gfx::basic_vertex(previous, glm::vec3(0.0f), glm::vec2(0.0f)));
+
+	previous = glm::vec3(FastGetPoint(1.0));
+	out.push_back(gfx::basic_vertex(previous, glm::vec3(0.0f), glm::vec2(0.0f)));
 }
-*/
-//---------------------------------------------------------------------------
+
+glm::vec3 TSegment::get_nearest_point(const glm::dvec3 &point, float quality) const
+{
+	float step = 1.0f / iSegCount / quality;
+
+	float x;
+
+	glm::vec3 nearest;
+	float min = std::numeric_limits<float>::max();
+
+	for (x = step; x <= 1.0f; x += step) {
+        glm::vec3 p1 = FastGetPoint(x);
+        glm::vec3 p2 = FastGetPoint(glm::min(1.0f, x + step));
+
+        if (p1 != p2) {
+            float l2 = glm::distance2(p1, p2);
+            float t = glm::max(0.0f, glm::min(1.0f, glm::dot((glm::vec3)point - p1, p2 - p1) / l2));
+            glm::vec3 proj = p1 + t * (p2 - p1);
+            p1 = proj;
+        }
+
+        float dist2 = glm::distance2(p1, (glm::vec3)point);
+
+		if (dist2 < min) {
+            nearest = p1;
+			min = dist2;
+		}
+	}
+
+	return nearest;
+}

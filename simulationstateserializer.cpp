@@ -13,12 +13,16 @@ http://mozilla.org/MPL/2.0/.
 #include "Globals.h"
 #include "simulation.h"
 #include "simulationtime.h"
+#include "simulationsounds.h"
+#include "simulationenvironment.h"
 #include "scenenodegroups.h"
 #include "particles.h"
 #include "Event.h"
+#include "MemCell.h"
 #include "Driver.h"
 #include "DynObj.h"
 #include "AnimModel.h"
+#include "lightarray.h"
 #include "TractionPower.h"
 #include "application.h"
 #include "renderer.h"
@@ -26,99 +30,100 @@ http://mozilla.org/MPL/2.0/.
 
 namespace simulation {
 
-bool
-state_serializer::deserialize( std::string const &Scenariofile ) {
+std::shared_ptr<deserializer_state>
+state_serializer::deserialize_begin( std::string const &Scenariofile ) {
+
+    crashreport_add_info("scenario", Scenariofile);
 
     // TODO: move initialization to separate routine so we can reuse it
     SafeDelete( Region );
     Region = new scene::basic_region();
 
+    simulation::State.init_scripting_interface();
+
+	// NOTE: for the time being import from text format is a given, since we don't have full binary serialization
+	std::shared_ptr<deserializer_state> state =
+	        std::make_shared<deserializer_state>(Scenariofile, cParser::buffer_FILE, Global.asCurrentSceneryPath, Global.bLoadTraction);
+
     // TODO: check first for presence of serialized binary files
     // if this fails, fall back on the legacy text format
-    scene::scratch_data importscratchpad;
-    importscratchpad.name = Scenariofile;
-    if( Scenariofile != "$.scn" ) {
+	state->scratchpad.name = Scenariofile;
+    if( ( true == Global.file_binary_terrain )
+     && ( Scenariofile != "$.scn" ) ) {
         // compilation to binary file isn't supported for rainsted-created overrides
         // NOTE: we postpone actual loading of the scene until we process time, season and weather data
-        importscratchpad.binary.terrain = Region->is_scene( Scenariofile ) ;
-    }
-    // NOTE: for the time being import from text format is a given, since we don't have full binary serialization
-    cParser scenarioparser( Scenariofile, cParser::buffer_FILE, Global.asCurrentSceneryPath, Global.bLoadTraction );
-
-    if( false == scenarioparser.ok() ) { return false; }
-
-    deserialize( scenarioparser, importscratchpad );
-    if( ( false == importscratchpad.binary.terrain )
-     && ( Scenariofile != "$.scn" ) ) {
-        // if we didn't find usable binary version of the scenario files, create them now for future use
-        // as long as the scenario file wasn't rainsted-created base file override
-        Region->serialize( Scenariofile );
+		state->scratchpad.binary.terrain = Region->is_scene( Scenariofile ) ;
     }
 
-    return true;
+    scene::Groups.create();
+
+	if( false == state->input.ok() )
+		throw invalid_scenery_exception();
+
+	// prepare deserialization function table
+	// since all methods use the same objects, we can have simple, hard-coded binds or lambdas for the task
+	using deserializefunction = void( state_serializer::*)(cParser &, scene::scratch_data &);
+	std::vector<
+	    std::pair<
+	        std::string,
+	        deserializefunction> > functionlist = {
+	            { "area",        &state_serializer::deserialize_area },
+	            { "isolated",    &state_serializer::deserialize_isolated },
+	            { "assignment",  &state_serializer::deserialize_assignment },
+	            { "atmo",        &state_serializer::deserialize_atmo },
+	            { "camera",      &state_serializer::deserialize_camera },
+	            { "config",      &state_serializer::deserialize_config },
+	            { "description", &state_serializer::deserialize_description },
+	            { "event",       &state_serializer::deserialize_event },
+	            { "lua",         &state_serializer::deserialize_lua },
+	            { "firstinit",   &state_serializer::deserialize_firstinit },
+	            { "group",       &state_serializer::deserialize_group },
+	            { "endgroup",    &state_serializer::deserialize_endgroup },
+	            { "light",       &state_serializer::deserialize_light },
+	            { "node",        &state_serializer::deserialize_node },
+	            { "origin",      &state_serializer::deserialize_origin },
+	            { "endorigin",   &state_serializer::deserialize_endorigin },
+	            { "rotate",      &state_serializer::deserialize_rotate },
+	            { "sky",         &state_serializer::deserialize_sky },
+	            { "test",        &state_serializer::deserialize_test },
+	            { "time",        &state_serializer::deserialize_time },
+	            { "trainset",    &state_serializer::deserialize_trainset },
+	            { "endtrainset", &state_serializer::deserialize_endtrainset } };
+
+	for( auto &function : functionlist ) {
+		state->functionmap.emplace( function.first, std::bind( function.second, this, std::ref( state->input ), std::ref( state->scratchpad ) ) );
+	}
+
+    if (!Global.prepend_scn.empty()) {
+        state->input.injectString(Global.prepend_scn);
+    }
+
+	return state;
 }
 
-// restores class data from provided stream
-void
-state_serializer::deserialize( cParser &Input, scene::scratch_data &Scratchpad ) {
-
-    // prepare deserialization function table
-    // since all methods use the same objects, we can have simple, hard-coded binds or lambdas for the task
-    using deserializefunction = void( state_serializer::*)(cParser &, scene::scratch_data &);
-    std::vector<
-        std::pair<
-            std::string,
-            deserializefunction> > functionlist = {
-                { "area",        &state_serializer::deserialize_area },
-                { "assignment",  &state_serializer::deserialize_assignment },
-                { "atmo",        &state_serializer::deserialize_atmo },
-                { "camera",      &state_serializer::deserialize_camera },
-                { "config",      &state_serializer::deserialize_config },
-                { "description", &state_serializer::deserialize_description },
-                { "event",       &state_serializer::deserialize_event },
-                { "lua",         &state_serializer::deserialize_lua },
-                { "firstinit",   &state_serializer::deserialize_firstinit },
-                { "group",       &state_serializer::deserialize_group },
-                { "endgroup",    &state_serializer::deserialize_endgroup },
-                { "light",       &state_serializer::deserialize_light },
-                { "node",        &state_serializer::deserialize_node },
-                { "origin",      &state_serializer::deserialize_origin },
-                { "endorigin",   &state_serializer::deserialize_endorigin },
-                { "rotate",      &state_serializer::deserialize_rotate },
-                { "sky",         &state_serializer::deserialize_sky },
-                { "test",        &state_serializer::deserialize_test },
-                { "time",        &state_serializer::deserialize_time },
-                { "trainset",    &state_serializer::deserialize_trainset },
-                { "endtrainset", &state_serializer::deserialize_endtrainset } };
-    using deserializefunctionbind = std::function<void()>;
-    std::unordered_map<
-        std::string,
-        deserializefunctionbind> functionmap;
-    for( auto &function : functionlist ) {
-        functionmap.emplace( function.first, std::bind( function.second, this, std::ref( Input ), std::ref( Scratchpad ) ) );
-    }
+// continues deserialization for given context, amount limited by time, returns true if needs to be called again
+bool
+state_serializer::deserialize_continue(std::shared_ptr<deserializer_state> state) {
+	cParser &Input = state->input;
+	scene::scratch_data &Scratchpad = state->scratchpad;
 
     // deserialize content from the provided input
-    auto
-        timelast { std::chrono::steady_clock::now() },
-        timenow { timelast };
+	auto timelast { std::chrono::steady_clock::now() };
     std::string token { Input.getToken<std::string>() };
     while( false == token.empty() ) {
 
-        auto lookup = functionmap.find( token );
-        if( lookup != functionmap.end() ) {
+		auto lookup = state->functionmap.find( token );
+		if( lookup != state->functionmap.end() ) {
             lookup->second();
         }
         else {
             ErrorLog( "Bad scenario: unexpected token \"" + token + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( Input.Line() - 1 ) + ")" );
         }
 
-        timenow = std::chrono::steady_clock::now();
+		auto timenow = std::chrono::steady_clock::now();
         if( std::chrono::duration_cast<std::chrono::milliseconds>( timenow - timelast ).count() >= 200 ) {
-            timelast = timenow;
-            glfwPollEvents();
             Application.set_progress( Input.getProgress(), Input.getFullProgress() );
-            GfxRenderer.Render();
+			return true;
         }
 
         token = Input.getToken<std::string>();
@@ -127,6 +132,37 @@ state_serializer::deserialize( cParser &Input, scene::scratch_data &Scratchpad )
     if( false == Scratchpad.initialized ) {
         // manually perform scenario initialization
         deserialize_firstinit( Input, Scratchpad );
+    }
+
+    scene::Groups.close();
+
+	scene::Groups.update_map();
+	Region->create_map_geometry();
+
+	if( ( true == Global.file_binary_terrain )
+     && ( false == state->scratchpad.binary.terrain )
+	 && ( state->scenariofile != "$.scn" ) ) {
+		// if we didn't find usable binary version of the scenario files, create them now for future use
+		// as long as the scenario file wasn't rainsted-created base file override
+		Region->serialize( state->scenariofile );
+	}
+
+	return false;
+}
+
+void
+state_serializer::deserialize_isolated( cParser &Input, scene::scratch_data &Scratchpad ) {
+    // first parameter specifies name of parent piece...
+    auto token { Input.getToken<std::string>() };
+    auto *groupowner { TIsolated::Find( token ) };
+    // ...followed by list of its tracks
+    while( ( false == ( token = Input.getToken<std::string>() ).empty() )
+        && ( token != "endisolated" ) ) {
+        auto *track { simulation::Paths.find( token ) };
+        if( track != nullptr )
+            track->AddIsolated( groupowner );
+        else
+            ErrorLog( "Bad scenario: track \"" + token + "\" not found" );
     }
 }
 
@@ -180,7 +216,7 @@ state_serializer::deserialize_atmo( cParser &Input, scene::scratch_data &Scratch
         Global.fFogEnd =
             clamp(
                 Random( std::min( fograngestart, fograngeend ), std::max( fograngestart, fograngeend ) ),
-                10.0, 2000.0 );
+                10.0, 25000.0 );
     }
 
     std::string token { Input.getToken<std::string>() };
@@ -300,7 +336,11 @@ void state_serializer::deserialize_lua( cParser &Input, scene::scratch_data &Scr
        Input.getTokens(1, false);
        std::string file;
        Input >> file;
+#ifdef WITH_LUA
        simulation::Lua.interpret(Global.asCurrentSceneryPath + file);
+#else
+       ErrorLog(file + ": lua scripts not supported in this build.");
+#endif
 }
 
 void
@@ -320,7 +360,23 @@ state_serializer::deserialize_firstinit( cParser &Input, scene::scratch_data &Sc
     simulation::Events.InitLaunchers();
     simulation::Memory.InitCells();
 
+	if (!Scratchpad.time_initialized)
+		init_time();
+
     Scratchpad.initialized = true;
+}
+
+void state_serializer::init_time() {
+	auto &time = simulation::Time.data();
+	if( true == Global.ScenarioTimeCurrent ) {
+		// calculate time shift required to match scenario time with local clock
+		auto const *localtime = std::gmtime( &Global.starting_timestamp );
+		Global.ScenarioTimeOffset = ( ( localtime->tm_hour * 60 + localtime->tm_min ) - ( time.wHour * 60 + time.wMinute ) ) / 60.f;
+	}
+	else if( false == std::isnan( Global.ScenarioTimeOverride ) ) {
+		// scenario time override takes precedence over scenario time offset
+		Global.ScenarioTimeOffset = ( ( Global.ScenarioTimeOverride * 60 ) - ( time.wHour * 60 + time.wMinute ) ) / 60.f;
+	}
 }
 
 void
@@ -430,7 +486,7 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
             // 3d terrain
             if( false == Scratchpad.binary.terrain ) {
                 // if we're loading data from text .scn file convert and import
-                auto *instance { deserialize_model( Input, Scratchpad, nodedata ) };
+                auto *instance = deserialize_model( Input, Scratchpad, nodedata );
                 // model import can potentially fail
                 if( instance == nullptr ) { return; }
                 // go through submodels, and import them as shapes
@@ -491,8 +547,8 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
             // crude way to detect fixed switch trackbed geometry
          || ( ( true == Global.CreateSwitchTrackbeds )
            && ( Input.Name().size() >= 15 )
-           && ( Input.Name().substr( 0, 11 ) == "scenery/zwr" )
-           && ( Input.Name().substr( Input.Name().size() - 4 ) == ".inc" ) ) };
+           && ( starts_with( Input.Name(), "scenery/zwr" ) )
+           && ( ends_with( Input.Name(), ".inc" ) ) ) };
 
         if( false == skip ) {
 
@@ -628,24 +684,28 @@ state_serializer::deserialize_time( cParser &Input, scene::scratch_data &Scratch
         >> time.wHour
         >> time.wMinute;
 
-    if( true == Global.ScenarioTimeCurrent ) {
-        // calculate time shift required to match scenario time with local clock
-        auto timenow = std::time( 0 );
-        auto const *localtime = std::localtime( &timenow );
-        Global.ScenarioTimeOffset = ( ( localtime->tm_hour * 60 + localtime->tm_min ) - ( time.wHour * 60 + time.wMinute ) ) / 60.f;
-    }
-    else if( false == std::isnan( Global.ScenarioTimeOverride ) ) {
-        // scenario time override takes precedence over scenario time offset
-        Global.ScenarioTimeOffset = ( ( Global.ScenarioTimeOverride * 60 ) - ( time.wHour * 60 + time.wMinute ) ) / 60.f;
-    }
-
     // remaining sunrise and sunset parameters are no longer used, as they're now calculated dynamically
     // anything else left in the section has no defined meaning
     skip_until( Input, "endtime" );
+
+	if (!Scratchpad.time_initialized)
+		Scratchpad.time_initialized = true;
+
+	init_time();
 }
 
 void
 state_serializer::deserialize_trainset( cParser &Input, scene::scratch_data &Scratchpad ) {
+
+	int line = Input.LineMain();
+	if (line != -1) {
+		auto it = Global.trainset_overrides.find(line);
+		if (it != Global.trainset_overrides.end()) {
+			skip_until(Input, "endtrainset");
+			Input.injectString(it->second);
+			return;
+		}
+	}
 
     if( true == Scratchpad.trainset.is_open ) {
         // shouldn't happen but if it does wrap up currently open trainset and report an error
@@ -653,8 +713,8 @@ state_serializer::deserialize_trainset( cParser &Input, scene::scratch_data &Scr
         ErrorLog( "Bad scenario: encountered nested trainset definitions in file \"" + Input.Name() + "\" (line " + std::to_string( Input.Line() ) + ")" );
     }
 
-    Scratchpad.trainset = scene::scratch_data::trainset_data();
-    Scratchpad.trainset.is_open = true;
+	Scratchpad.trainset = scene::scratch_data::trainset_data();
+	Scratchpad.trainset.is_open = true;
 
     Input.getTokens( 4 );
     Input
@@ -690,7 +750,7 @@ state_serializer::deserialize_endtrainset( cParser &Input, scene::scratch_data &
         }
         if( vehicleindex > 0 ) {
             // from second vehicle on couple it with the previous one
-            Scratchpad.trainset.vehicles[ vehicleindex - 1 ]->AttachPrev(
+            Scratchpad.trainset.vehicles[ vehicleindex - 1 ]->AttachNext(
                 vehicle,
                 Scratchpad.trainset.couplings[ vehicleindex - 1 ] );
         }
@@ -710,7 +770,12 @@ state_serializer::deserialize_endtrainset( cParser &Input, scene::scratch_data &
     }
     if( Scratchpad.trainset.couplings.back() == coupling::faux ) {
         // jeśli ostatni pojazd ma sprzęg 0 to założymy mu końcówki blaszane (jak AI się odpali, to sobie poprawi)
-        Scratchpad.trainset.vehicles.back()->RaLightsSet( -1, light::rearendsignals );
+        // place end signals only on trains without a driver, activate markers otherwise
+        Scratchpad.trainset.vehicles.back()->RaLightsSet(
+            -1,
+            ( Scratchpad.trainset.driver != nullptr ?
+                light::redmarker_left | light::redmarker_right | light::rearendsignals :
+                light::rearendsignals ) );
     }
     // all done
     Scratchpad.trainset.is_open = false;
@@ -835,9 +900,9 @@ state_serializer::deserialize_dynamic( cParser &Input, scene::scratch_data &Scra
     auto skinfile { Input.getToken<std::string>() };
     auto mmdfile { Input.getToken<std::string>() };
 
-    std::replace(datafolder.begin(), datafolder.end(), '\\', '/');
-    std::replace(skinfile.begin(), skinfile.end(), '\\', '/');
-    std::replace(mmdfile.begin(), mmdfile.end(), '\\', '/');
+	replace_slashes(datafolder);
+	replace_slashes(skinfile);
+	replace_slashes(mmdfile);
 
     auto const pathname = (
         Scratchpad.trainset.is_open ?
@@ -1000,10 +1065,10 @@ state_serializer::transform( glm::dvec3 Location, scene::scratch_data const &Scr
     return Location;
 }
 
-
+/*
 // stores class data in specified file, in legacy (text) format
 void
-state_serializer::export_as_text( std::string const &Scenariofile ) const {
+state_serializer::export_as_text(std::string const &Scenariofile) const {
 
     if( Scenariofile == "$.scn" ) {
         ErrorLog( "Bad file: scenery export not supported for file \"$.scn\"" );
@@ -1012,64 +1077,178 @@ state_serializer::export_as_text( std::string const &Scenariofile ) const {
         WriteLog( "Scenery data export in progress..." );
     }
 
-    auto filename { Scenariofile };
-    while( filename[ 0 ] == '$' ) {
+	auto filename { Scenariofile };
+	while( filename[ 0 ] == '$' ) {
         // trim leading $ char rainsted utility may add to the base name for modified .scn files
-        filename.erase( 0, 1 );
+		filename.erase( 0, 1 );
     }
-    erase_extension( filename );
-    filename = Global.asCurrentSceneryPath + filename + "_export";
+	erase_extension( filename );
+	auto absfilename = Global.asCurrentSceneryPath + filename + "_export";
 
-    std::ofstream scmfile { filename + ".scm" };
-    // groups
-    scmfile << "// groups\n";
-    scene::Groups.export_as_text( scmfile );
-    // tracks
-    scmfile << "// paths\n";
-    for( auto const *path : Paths.sequence() ) {
-        if( path->group() == null_handle ) {
-            path->export_as_text( scmfile );
-        }
-    }
-    // traction
-    scmfile << "// traction\n";
-    for( auto const *traction : Traction.sequence() ) {
-        if( traction->group() == null_handle ) {
-            traction->export_as_text( scmfile );
-        }
-    }
-    // power grid
-    scmfile << "// traction power sources\n";
-    for( auto const *powersource : Powergrid.sequence() ) {
-        if( powersource->group() == null_handle ) {
-            powersource->export_as_text( scmfile );
-        }
-    }
-    // models
-    scmfile << "// instanced models\n";
-    for( auto const *instance : Instances.sequence() ) {
-        if( instance->group() == null_handle ) {
-            instance->export_as_text( scmfile );
-        }
-    }
-    // sounds
-    // NOTE: sounds currently aren't included in groups
-    scmfile << "// sounds\n";
-    Region->export_as_text( scmfile );
+	std::ofstream scmdirtyfile { absfilename + "_dirty.scm" };
+	export_nodes_to_stream(scmdirtyfile, true);
 
-    std::ofstream ctrfile { filename + ".ctr" };
-    // mem cells
-    ctrfile << "// memory cells\n";
-    for( auto const *memorycell : Memory.sequence() ) {
-        if( ( true == memorycell->is_exportable )
-         && ( memorycell->group() == null_handle ) ) {
-            memorycell->export_as_text( ctrfile );
-        }
-    }
-    // events
-    Events.export_as_text( ctrfile );
+	std::ofstream scmfile { absfilename + ".scm" };
+	export_nodes_to_stream(scmfile, false);
+
+	// sounds
+	// NOTE: sounds currently aren't included in groups
+	scmfile << "// sounds\n";
+	Region->export_as_text( scmfile );
+
+	scmfile << "// modified objects\ninclude " << filename << "_export_dirty.scm\n";
+
+	std::ofstream ctrfile { absfilename + ".ctr" };
+	// mem cells
+	ctrfile << "// memory cells\n";
+	for( auto const *memorycell : Memory.sequence() ) {
+		if( ( true == memorycell->is_exportable )
+		 && ( memorycell->group() == null_handle ) ) {
+			memorycell->export_as_text( ctrfile );
+		}
+	}
+
+	// events
+	Events.export_as_text( ctrfile );
 
     WriteLog( "Scenery data export done." );
+}
+*/
+void
+state_serializer::export_as_text(std::string const &Scenariofile) const {
+
+    if( Scenariofile == "$.scn" ) {
+        ErrorLog( "Bad file: scenery export not supported for file \"$.scn\"" );
+    }
+    else {
+        WriteLog( "Scenery data export in progress..." );
+    }
+
+	auto filename { Scenariofile };
+	while( filename[ 0 ] == '$' ) {
+        // trim leading $ char rainsted utility may add to the base name for modified .scn files
+		filename.erase( 0, 1 );
+    }
+	erase_extension( filename );
+	auto absfilename = Global.asCurrentSceneryPath + filename + "_export";
+
+	std::ofstream scmdirtyfile { absfilename + "_dirty.scm" };
+	export_nodes_to_stream(scmdirtyfile, true);
+
+	std::ofstream scmfile { absfilename + ".scm" };
+	export_nodes_to_stream(scmfile, false);
+
+	// sounds
+	// NOTE: sounds currently aren't included in groups
+	scmfile << "// sounds\n";
+	Region->export_as_text( scmfile );
+
+	scmfile << "// modified objects\ninclude " << filename << "_export_dirty.scm\n";
+
+	std::ofstream ctrfile { absfilename + ".ctr" };
+	// mem cells
+	ctrfile << "// memory cells\n";
+	for( auto const *memorycell : Memory.sequence() ) {
+		if( ( true == memorycell->is_exportable )
+		 && ( memorycell->group() == null_handle ) ) {
+			memorycell->export_as_text( ctrfile );
+		}
+	}
+
+	// events
+	Events.export_as_text( ctrfile );
+
+    WriteLog( "Scenery data export done." );
+}
+
+void
+state_serializer::export_nodes_to_stream(std::ostream &scmfile, bool Dirty) const {
+	// groups
+	scmfile << "// groups\n";
+	scene::Groups.export_as_text( scmfile, Dirty );
+
+	// tracks
+	scmfile << "// paths\n";
+	for( auto const *path : Paths.sequence() ) {
+		if( path->dirty() == Dirty && path->group() == null_handle ) {
+			path->export_as_text( scmfile );
+		}
+	}
+	// traction
+	scmfile << "// traction\n";
+	for( auto const *traction : Traction.sequence() ) {
+		if( traction->dirty() == Dirty && traction->group() == null_handle ) {
+			traction->export_as_text( scmfile );
+		}
+	}
+	// power grid
+	scmfile << "// traction power sources\n";
+	for( auto const *powersource : Powergrid.sequence() ) {
+		if( powersource->dirty() == Dirty && powersource->group() == null_handle ) {
+			powersource->export_as_text( scmfile );
+		}
+	}
+	// models
+	scmfile << "// instanced models\n";
+	for( auto const *instance : Instances.sequence() ) {
+		if( instance && instance->dirty() == Dirty && instance->group() == null_handle ) {
+			instance->export_as_text( scmfile );
+		}
+	}
+}
+
+TAnimModel *state_serializer::create_model(const std::string &src, const std::string &name, const glm::dvec3 &position) {
+	cParser parser(src);
+	parser.getTokens(); // "node"
+	parser.getTokens(2); // ranges
+
+	scene::node_data nodedata;
+	parser >> nodedata.range_max >> nodedata.range_min;
+
+	parser.getTokens(2); // name, type
+	nodedata.name = name;
+	nodedata.type = "model";
+
+	scene::scratch_data scratch;
+
+	TAnimModel *cloned = deserialize_model(parser, scratch, nodedata);
+
+	if (!cloned)
+		return nullptr;
+
+	cloned->mark_dirty();
+	cloned->location(position);
+	simulation::Instances.insert(cloned);
+	simulation::Region->insert(cloned);
+
+	return cloned;
+}
+
+TEventLauncher *state_serializer::create_eventlauncher(const std::string &src, const std::string &name, const glm::dvec3 &position) {
+	cParser parser(src);
+	parser.getTokens(); // "node"
+	parser.getTokens(2); // ranges
+
+	scene::node_data nodedata;
+	parser >> nodedata.range_max >> nodedata.range_min;
+
+	parser.getTokens(2); // name, type
+	nodedata.name = name;
+	nodedata.type = "eventlauncher";
+
+	scene::scratch_data scratch;
+
+	TEventLauncher *launcher = deserialize_eventlauncher(parser, scratch, nodedata);
+
+	if (!launcher)
+		return nullptr;
+
+	launcher->Event1 = simulation::Events.FindEvent( launcher->asEvent1Name );
+	launcher->location(position);
+	simulation::Events.insert(launcher);
+	simulation::Region->insert(launcher);
+
+	return launcher;
 }
 
 } // simulation

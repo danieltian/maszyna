@@ -16,6 +16,7 @@ http://mozilla.org/MPL/2.0/.
 #include "Train.h"
 #include "DynObj.h"
 #include "simulation.h"
+#include "audiorenderer_extra.h"
 
 // constructors
 sound_source::sound_source( sound_placement const Placement, float const Range ) :
@@ -117,20 +118,23 @@ sound_source::deserialize( cParser &Input, sound_type const Legacytype, int cons
         }
 
         if( Legacyparameters & sound_parameters::range ) {
-            Input.getTokens( 1, false );
-            Input >> m_range;
+            if( Input.getTokens( 1, false ) ) {
+                Input >> m_range;
+            }
         }
         if( Legacyparameters & sound_parameters::amplitude ) {
-            Input.getTokens( 2, false );
-            Input
-                >> m_amplitudefactor
-                >> m_amplitudeoffset;
+            if( Input.getTokens( 2, false ) ) {
+                Input
+                    >> m_amplitudefactor
+                    >> m_amplitudeoffset;
+            }
         }
         if( Legacyparameters & sound_parameters::frequency ) {
-            Input.getTokens( 2, false );
-            Input
-                >> m_frequencyfactor
-                >> m_frequencyoffset;
+            if( Input.getTokens( 2, false ) ) {
+                Input
+                    >> m_frequencyfactor
+                    >> m_frequencyoffset;
+            }
         }
     }
     // restore parser behaviour
@@ -168,10 +172,28 @@ sound_source::deserialize_mapping( cParser &Input ) {
     else if( key == "soundend:" ) {
         sound( sound_id::end ).buffer = audio::renderer.fetch_buffer( deserialize_random_set( Input, "\n\r\t ,;" ) );
     }
-    else if( key.compare( 0, std::min<std::size_t>( key.size(), 5 ), "sound" ) == 0 ) {
+    else if( key == "soundproofing:" ) {
+        // custom soundproofing in format [ p1, p2, p3, p4, p5, p6 ]
+        Input.getTokens( 6, false, "\n\r\t ,;[]" );
+        std::array<float, 6> soundproofing;
+        Input
+            >> soundproofing[ 0 ]
+            >> soundproofing[ 1 ]
+            >> soundproofing[ 2 ]
+            >> soundproofing[ 3 ]
+            >> soundproofing[ 4 ]
+            >> soundproofing[ 5 ];
+        for( auto & soundproofingelement : soundproofing ) {
+            if( soundproofingelement != -1.f ) {
+                soundproofingelement = std::sqrt( clamp( soundproofingelement, 0.f, 1.f ) );
+            }
+        }
+        m_soundproofing = soundproofing;
+    }
+    else if( starts_with( key, "sound" ) ) {
         // sound chunks, defined with key soundX where X = activation threshold
-        auto const indexstart { key.find_first_of( "1234567890" ) };
-        auto const indexend { key.find_first_not_of( "1234567890", indexstart ) };
+        auto const indexstart { key.find_first_of( "-1234567890" ) };
+        auto const indexend { key.find_first_not_of( "-1234567890", indexstart ) };
         if( indexstart != std::string::npos ) {
             // NOTE: we'll sort the chunks at the end of deserialization
             m_soundchunks.emplace_back(
@@ -182,10 +204,27 @@ sound_source::deserialize_mapping( cParser &Input ) {
                     { std::stoi( key.substr( indexstart, indexend - indexstart ) ), 0, 0, 1.f } } );
         }
     }
-    else if( key.compare( 0, std::min<std::size_t>( key.size(), 5 ), "pitch" ) == 0 ) {
+    else if( key == "pitchvariation:" ) {
+        auto const variation {
+            clamp(
+                Input.getToken<float>( false, "\n\r\t ,;" ),
+                0.0f, 1.0f )
+            * 100.0f / 2.0f };
+        m_pitchvariation = (
+            variation == 0.0f ?
+                1.0f :
+                0.01f * static_cast<float>( LocalRandom( 100.0 - variation, 100.0 + variation ) ) );
+    }
+    else if( key == "startoffset:" ) {
+        m_startoffset =
+            clamp(
+                Input.getToken<float>( false, "\n\r\t ,;" ),
+                0.0f, 1.0f );
+    }
+    else if( starts_with( key, "pitch" ) ) {
         // sound chunk pitch, defined with key pitchX where X = activation threshold
-        auto const indexstart { key.find_first_of( "1234567890" ) };
-        auto const indexend { key.find_first_not_of( "1234567890", indexstart ) };
+        auto const indexstart { key.find_first_of( "-1234567890" ) };
+        auto const indexend { key.find_first_not_of( "-1234567890", indexstart ) };
         if( indexstart != std::string::npos ) {
             auto const index { std::stoi( key.substr( indexstart, indexend - indexstart ) ) };
             auto const pitch { Input.getToken<float>( false, "\n\r\t ,;" ) };
@@ -209,6 +248,7 @@ sound_source::deserialize_mapping( cParser &Input ) {
             { "internal", sound_placement::internal },
             { "engine", sound_placement::engine },
             { "external", sound_placement::external },
+            { "custom", sound_placement::custom },
             { "general", sound_placement::general } };
         auto lookup{ placements.find( value ) };
         if( lookup != placements.end() ) {
@@ -321,8 +361,8 @@ sound_source::play( int const Flags ) {
     // NOTE: we cache the flags early, even if the sound is out of range, to mark activated event sounds 
     m_flags = Flags;
 
-    if( m_range > 0 ) {
-        auto const cutoffrange { m_range * 5 };
+    if( m_range != -1 ) {
+        auto const cutoffrange { std::abs( m_range * 5 ) };
         if( glm::length2( location() - glm::dvec3 { Global.pCamera.Pos } ) > std::min( 2750.f * 2750.f, cutoffrange * cutoffrange ) ) {
             // while we drop sounds from beyond sensible and/or audible range
             // we act as if it was activated normally, meaning no need to include the opening bookend in subsequent calls
@@ -333,7 +373,7 @@ sound_source::play( int const Flags ) {
 
     // initialize emitter-specific pitch variation if it wasn't yet set
     if( m_pitchvariation == 0.f ) {
-        m_pitchvariation = 0.01f * static_cast<float>( Random( 97.5, 102.5 ) );
+        m_pitchvariation = 0.01f * static_cast<float>( LocalRandom( 97.5, 102.5 ) );
     }
 /*
     if( ( ( m_flags & sound_flags::exclusive ) != 0 )
@@ -342,6 +382,13 @@ sound_source::play( int const Flags ) {
         m_stopend = true;
     }
 */
+    // determine sound category
+    // TBD, TODO: user-configurable
+    m_properties.category = (
+        m_owner ? sound_category::vehicle :
+        m_range < 0 ? sound_category::ambient :
+        sound_category::local );
+
     if( sound( sound_id::main ).buffer != null_handle ) {
         // basic variant: single main sound, with optional bookends
         play_basic();
@@ -507,9 +554,14 @@ sound_source::update_basic( audio::openal_source &Source ) {
             // detect the moment when the sound moves from startup sample to the main
             if( true == Source.sound_change ) {
                 // when it happens update active sample counters, and potentially activate the looping
-                update_counter( sound_id::begin, -1 );
+                if( soundhandle == sound_id::main ) {
+                    update_counter( sound_id::begin, -1 );
+                }
                 update_counter( soundhandle, 1 );
-                Source.loop( TestFlag( m_flags, sound_flags::looping ) );
+                Source.loop( (
+                    soundhandle == sound_id::main ?
+                        TestFlag( m_flags, sound_flags::looping ) :
+                        false ) );
             }
         }
 
@@ -550,10 +602,11 @@ sound_source::update_basic( audio::openal_source &Source ) {
             // the emitter wasn't yet started
             auto const soundhandle { Source.sounds[ Source.sound_index ] };
             // emitter initialization
-            if( soundhandle == sound_id::main ) {
-                // main sample can be optionally set to loop
-                Source.loop( TestFlag( m_flags, sound_flags::looping ) );
-            }
+            // main sample can be optionally set to loop
+            Source.loop( (
+                soundhandle == sound_id::main ?
+                    TestFlag( m_flags, sound_flags::looping ) :
+                    false ) );
             Source.range( m_range );
             Source.pitch( m_pitchvariation );
             update_location();
@@ -574,7 +627,19 @@ sound_source::update_basic( audio::openal_source &Source ) {
         }
         else {
             // the emitter is either all done or was terminated early
-            update_counter( Source.sounds[ Source.sound_index - 1 ], -1 );
+            if( true == Source.sound_change ) {
+                // HACK: sound change flag means when the emitter was stopped our state counters were tracking previous sound in the sequence
+                // the id of that sound is no longer available, but for basic sounds we can make presumption about it
+                update_counter( Source.sounds[ Source.sound_index - 1 ] - 1, -1 );
+            }
+            else {
+                update_counter( Source.sounds[ Source.sound_index - 1 ], -1 );
+            }
+            /*
+            for( auto &soundchunk : m_soundchunks ) {
+                soundchunk.first.playing = 0;
+            }
+            */
         }
     }
 }
@@ -750,12 +815,15 @@ sound_source::update_crossfade( sound_handle const Chunk ) {
         // chunks other than the first can have fadein
         auto const fadeinwidth { chunkdata.threshold - chunkdata.fadein };
         if( soundpoint < chunkdata.threshold ) {
-            m_properties.gain *=
+            float lineargain =
                 interpolate(
                     0.f, 1.f,
                     clamp(
                         ( soundpoint - chunkdata.fadein ) / fadeinwidth,
                         0.f, 1.f ) );
+            m_properties.gain *=
+                lineargain /
+                (1 + (1 - lineargain) * (-0.57)); // approximation of logarytmic fade in
             return;
         }
     }
@@ -767,12 +835,14 @@ sound_source::update_crossfade( sound_handle const Chunk ) {
         auto const fadeoutwidth { chunkdata.fadeout - m_soundchunks[ chunkindex + 1 ].second.fadein };
         auto const fadeoutstart { chunkdata.fadeout - fadeoutwidth };
         if( soundpoint > fadeoutstart ) {
-            m_properties.gain *=
+			float lineargain =
                 interpolate(
-                    1.f, 0.f,
+                    0.f, 1.f,
                     clamp(
                         ( soundpoint - fadeoutstart ) / fadeoutwidth,
                         0.f, 1.f ) );
+            m_properties.gain *= (-lineargain + 1) /
+                                 (1 + lineargain * (-0.57)); // approximation of logarytmic fade out
             return;
         }
     }
@@ -833,6 +903,20 @@ sound_source::is_combined() const {
     return ( ( !m_soundchunks.empty() ) && ( sound( sound_id::main ).buffer == null_handle ) );
 }
 
+// returns true if specified buffer is one of the optional bookends
+bool
+sound_source::is_bookend( audio::buffer_handle const Buffer ) const {
+
+    return ( ( sound( sound_id::begin ).buffer == Buffer ) || ( sound( sound_id::end ).buffer == Buffer ) );
+}
+
+// returns true if the source has optional bookends
+bool
+sound_source::has_bookends() const {
+
+    return ( ( sound( sound_id::begin ).buffer != null_handle ) && ( sound( sound_id::end ).buffer != null_handle ) );
+}
+
 // returns location of the sound source in simulation region space
 glm::dvec3 const
 sound_source::location() const {
@@ -847,6 +931,12 @@ sound_source::location() const {
         + m_owner->VectorLeft() * m_offset.x
         + m_owner->VectorUp() * m_offset.y
         + m_owner->VectorFront() * m_offset.z };
+}
+
+void
+sound_source::range( float const Range ) {
+
+    m_range = Range;
 }
 
 // returns defined range of the sound
@@ -868,7 +958,13 @@ sound_source::update_counter( sound_handle const Sound, int const Value ) {
             ui::Transcripts.Add( buffer.caption );
         }
     }
-    assert( sound( Sound ).playing >= 0 );
+//    assert( sound( Sound ).playing >= 0 );
+    if( sound( Sound ).playing < 0 ) {
+        // HACK: counter can occassionally go into negative values
+        // TODO: investigate and fix
+        ErrorLog("sound: negative sound playcount!!");
+        sound( Sound ).playing = 0;
+    }
 }
 
 void
@@ -877,71 +973,54 @@ sound_source::update_location() {
     m_properties.location = location();
 }
 
-float const EU07_SOUNDPROOFING_STRONG { 0.25f };
-float const EU07_SOUNDPROOFING_SOME { 0.65f };
-float const EU07_SOUNDPROOFING_NONE { 1.f };
-
 bool
 sound_source::update_soundproofing() {
-    // NOTE, HACK: current cab id can vary from -1 to +1, and we use another higher priority value for open cab window
+    // NOTE, HACK: current cab id can vary from -1 to +1, and we use higher priority values for open cab window and external views
     // we use this as modifier to force re-calculations when moving between compartments or changing window state
-    int const activecab = (
-        Global.CabWindowOpen ? 2 :
-        FreeFlyModeFlag ? 0 :
-        ( simulation::Train ?
-            simulation::Train->Occupied()->ActiveCab :
-            0 ) );
+    auto const *listenervehicle { Global.pCamera.m_owner }; // nullptr in free roam mode
+    auto const occupiedcab { (
+        Global.CabWindowOpen ? 2 : // window view
+        FreeFlyModeFlag ? (
+            listenervehicle ?
+                3 : // external view
+                4 ) : // free roam view
+        listenervehicle->MoverParameters->CabOccupied ) }; // some internal view so we can be sure listener isn't a nullptr
     // location-based gain factor:
-    std::uintptr_t soundproofingstamp = reinterpret_cast<std::uintptr_t>( (
-        FreeFlyModeFlag ?
-            nullptr :
-            ( simulation::Train ?
-                simulation::Train->Dynamic() :
-                nullptr ) ) )
-        + activecab;
+    std::uintptr_t soundproofingstamp =
+        reinterpret_cast<std::uintptr_t>( listenervehicle )
+        + ( listenervehicle ?
+                occupiedcab :
+                0 );
 
     if( soundproofingstamp == m_properties.soundproofing_stamp ) { return false; }
 
     // listener location has changed, calculate new location-based gain factor
-    switch( m_placement ) {
-        case sound_placement::general: {
-            m_properties.soundproofing = EU07_SOUNDPROOFING_NONE;
-            break;
-        }
-        case sound_placement::external: {
+    // TBD, TODO: clean up parameters for soundproofing() call -- make ambient separate, explicit placement
+    m_properties.soundproofing = EU07_SOUNDPROOFING_NONE; // default proofing for environment sounds and free listener
+    if( m_placement != sound_placement::general ) {
+        auto const isambient { ( ( m_placement == sound_placement::external ) && ( m_owner == nullptr ) && ( m_range < -1 ) ? 1 : 0 ) };
+        auto const placement { ( isambient ? sound_placement::external_ambient : m_placement ) };
+        if( m_owner != nullptr ) {
+            auto const listenerlocation { (
+                m_owner != listenervehicle ?
+                    4 : // part of two-stage calculation owner->outside->listener, or single stage owner->outside one
+                    occupiedcab ) };
             m_properties.soundproofing = (
-                ( ( soundproofingstamp == 0 ) || ( true == Global.CabWindowOpen ) ) ?
-                    EU07_SOUNDPROOFING_NONE : // listener outside or has a window open
-                    EU07_SOUNDPROOFING_STRONG ); // listener in a vehicle with windows shut
-            break;
+                m_soundproofing ? // custom soundproofing has higher priority than that of the owner
+                    m_soundproofing.value()[ listenerlocation + 1 ] : // cab indices start from -1 so we have to account for this
+                    m_owner->soundproofing( static_cast<int>( placement ), listenerlocation ) );
         }
-        case sound_placement::internal: {
-            m_properties.soundproofing = (
-                soundproofingstamp == 0 ?
-                    EU07_SOUNDPROOFING_STRONG : // listener outside HACK: won't be true if active vehicle has open window
-                    ( simulation::Train->Dynamic() != m_owner ?
-                        EU07_SOUNDPROOFING_STRONG : // in another vehicle
-                        ( activecab == 0 ?
-                            EU07_SOUNDPROOFING_STRONG : // listener in the engine compartment
-                            EU07_SOUNDPROOFING_NONE ) ) ); // listener in the cab of the same vehicle
-            break;
+        if( ( listenervehicle ) && ( listenervehicle != m_owner ) ) {
+            // if the listener is located in another vehicle, calculate additional proofing of the sound coming from outside
+            m_properties.soundproofing *=
+                listenervehicle->soundproofing(
+                    static_cast<int>( sound_placement::external ) + isambient,
+                    occupiedcab );
         }
-        case sound_placement::engine: {
-            m_properties.soundproofing = (
-                ( ( soundproofingstamp == 0 ) || ( true == Global.CabWindowOpen ) ) ?
-                    EU07_SOUNDPROOFING_SOME : // listener outside or has a window open
-                    ( simulation::Train->Dynamic() != m_owner ?
-                        EU07_SOUNDPROOFING_STRONG : // in another vehicle
-                        ( activecab == 0 ?
-                            EU07_SOUNDPROOFING_NONE : // listener in the engine compartment
-                            EU07_SOUNDPROOFING_STRONG ) ) ); // listener in another compartment of the same vehicle
-            break;
-        }
-        default: {
-            // shouldn't ever land here, but, eh
-            m_properties.soundproofing = EU07_SOUNDPROOFING_NONE;
-            break;
-        }
+    }
+    // for ambient sounds reduce their volume to account for their placement right on top of the listener
+    if( m_range < -1 ) {
+        m_properties.soundproofing *= 0.4f;
     }
 
     m_properties.soundproofing_stamp = soundproofingstamp;

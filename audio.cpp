@@ -69,7 +69,7 @@ openal_buffer::openal_buffer( std::string const &Filename ) :
 	}
 	else {
 		id = null_resource;
-		ErrorLog("sound: failed to create AL buffer");
+		ErrorLog("sound: failed to create AL buffer: " + std::string(alGetString(alGetError())));
 	}
 
 	delete[] buf;
@@ -143,7 +143,7 @@ buffer_manager::create( std::string const &Filename ) {
         return emplace( filelookup );
     }
     // if we still didn't find anything, give up
-    ErrorLog( "Bad file: failed do locate audio file \"" + Filename + "\"", logtype::file );
+	ErrorLog( "Bad file: failed to locate audio file \"" + Filename + "\"", logtype::file );
     return null_handle;
 }
 

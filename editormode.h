@@ -45,6 +45,8 @@ public:
         on_scroll( double const Xoffset, double const Yoffset ) override { ; }
     void
         on_event_poll() override;
+    bool
+        is_command_processor() const override;
 
 private:
 // types
@@ -82,5 +84,5 @@ private:
     scene::basic_editor m_editor;
     scene::basic_node *m_node; // currently selected scene node
     bool m_takesnapshot { true }; // helper, hints whether snapshot of selected node(s) should be taken before modification
-
+    bool m_dragging = false;
 };

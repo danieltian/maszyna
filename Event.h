@@ -14,7 +14,12 @@ http://mozilla.org/MPL/2.0/.
 #include "Names.h"
 #include "EvLaunch.h"
 #include "Logs.h"
+#include "command.h"
+#include "comparison.h"
+
+#ifdef WITH_LUA
 #include "lua.h"
+#endif
 
 // common event interface
 class basic_event {
@@ -24,13 +29,14 @@ public:
     enum flags {
         // shared values
         text        = 1 << 0,
-        value_1     = 1 << 1,
-        value_2     = 1 << 2,
+        value1      = 1 << 1,
+        value2      = 1 << 2,
         // update values
         mode_add    = 1 << 3,
         // whois
         mode_alt    = 1 << 3,
-        load        = 1 << 4,
+        whois_load  = 1 << 4,
+        whois_name  = 1 << 5,
         // condition values
         track_busy  = 1 << 3,
         track_free  = 1 << 4,
@@ -79,6 +85,7 @@ public:
     virtual glm::dvec3 input_location() const;
     void group( scene::group_handle Group );
     scene::group_handle group() const;
+	std::string const &name() const { return m_name; }
 // members
     basic_event *m_next { nullptr }; // następny w kolejce // TODO: replace with event list in the manager
     basic_event *m_sibling { nullptr }; // kolejny event z tą samą nazwą - od wersji 378
@@ -90,6 +97,7 @@ public:
     double m_launchtime { 0.0 };
     double m_delay { 0.0 };
     double m_delayrandom { 0.0 }; // zakres dodatkowego opóźnienia // standardowo nie będzie dodatkowego losowego opóźnienia
+    double m_delaydeparture { std::numeric_limits<double>::quiet_NaN() }; // departure-based event delay
 
 protected:
 // types
@@ -99,10 +107,14 @@ protected:
     struct event_conditions {
         unsigned int flags { 0 };
         float probability { 0.0 }; // used by conditional_probability
-        double match_value_1 { 0.0 }; // used by conditional_memcompare
-        double match_value_2 { 0.0 }; // used by conditional_memcompare
-        std::string match_text; // used by conditional_memcompare
-        basic_event::node_sequence *cells; // used by conditional_memcompare
+        double memcompare_value1 { 0.0 }; // used by conditional_memcompare
+        double memcompare_value2 { 0.0 }; // used by conditional_memcompare
+        std::string memcompare_text; // used by conditional_memcompare
+        comparison_operator memcompare_value1_operator { comparison_operator::equal }; // used by conditional_memcompare
+        comparison_operator memcompare_value2_operator { comparison_operator::equal }; // used by conditional_memcompare
+        comparison_operator memcompare_text_operator { comparison_operator::equal }; // used by conditional_memcompare
+        comparison_pass memcompare_pass { comparison_pass::all }; // used by conditional_memcompare
+        basic_event::node_sequence *memcompare_cells; // used by conditional_memcompare
         std::vector<TTrack *> tracks; // used by conditional_track
         bool has_else { false };
 
@@ -266,6 +278,8 @@ private:
     void run_() override;
     // export_as_text() subclass details
     void export_as_text_( std::ostream &Output ) const override;
+    //determines whether provided input should be passed to consist owner
+    bool is_command_for_owner( input_data const &Input ) const;
 };
 
 
@@ -319,6 +333,8 @@ public:
     // prepares event for use
     void init() override;
 
+	std::vector<std::string> dump_children_names() const;
+
 private:
 // types
     // wrapper for binding between editor-supplied name, event, and execution conditional flag
@@ -336,6 +352,8 @@ private:
     std::vector<conditional_event> m_children; // events which are placed in the query when this event is executed
     event_conditions m_conditions;
 };
+
+
 
 class sound_event : public basic_event {
 
@@ -365,6 +383,42 @@ private:
     int m_soundradiochannel{ 0 };
 };
 
+
+
+// assigns a texture as specified replacable skin to a list of specified scene model nodes
+// skin filename is built dynamically using specified expression and list of parameters from optional specified memory cell
+class texture_event : public basic_event {
+
+public:
+// methods
+    // prepares event for use
+    void init() override;
+
+private:
+// types
+    struct input_data {
+        basic_node data_source { "", nullptr };
+
+        TMemCell const * data_cell() const;
+        TMemCell * data_cell();
+    };
+// methods
+    // event type string
+    std::string type() const override;
+    // deserialize() subclass details
+    void deserialize_( cParser &Input, scene::scratch_data &Scratchpad ) override;
+    // run() subclass details
+    void run_() override;
+    // export_as_text() subclass details
+    void export_as_text_( std::ostream &Output ) const override;
+// members
+    int m_skinindex { 0 }; // index of target replacable skin
+    std::string m_skin; // expression defining skin filename
+    input_data m_input; // optional source of expression parameters
+};
+
+
+
 class animation_event : public basic_event {
 
 public:
@@ -388,11 +442,13 @@ private:
     int m_animationtype{ 0 };
     std::array<double, 4> m_animationparams{ 0.0 };
     std::string m_animationsubmodel;
-    std::vector<TAnimContainer *> m_animationcontainers;
+	std::list<std::weak_ptr<TAnimContainer>> m_animationcontainers;
     std::string m_animationfilename;
     std::size_t m_animationfilesize{ 0 };
     char *m_animationfiledata{ nullptr };
 };
+
+
 
 class lights_event : public basic_event {
 
@@ -414,6 +470,8 @@ private:
 // members
     std::vector<float> m_lights;
 };
+
+
 
 class switch_event : public basic_event {
 
@@ -438,6 +496,8 @@ private:
     float m_switchmovedelay{ -1.f };
 };
 
+
+
 class track_event : public basic_event {
 
 public:
@@ -458,6 +518,8 @@ private:
 // members
     float m_velocity{ 0.f };
 };
+
+
 
 class voltage_event : public basic_event {
 
@@ -480,6 +542,8 @@ private:
     float m_voltage{ -1.f };
 };
 
+
+
 class visible_event : public basic_event {
 
 public:
@@ -500,6 +564,8 @@ private:
 // members
     bool m_visible{ true };
 };
+
+
 
 class friction_event : public basic_event {
 
@@ -522,6 +588,7 @@ private:
     float m_friction{ -1.f };
 };
 
+#ifdef WITH_LUA
 class lua_event : public basic_event {
 public:
     lua_event(lua::eventhandler_t func);
@@ -536,6 +603,7 @@ private:
 
     lua::eventhandler_t lua_func = nullptr;
 };
+#endif
 
 class message_event : public basic_event {
 
@@ -593,14 +661,27 @@ public:
                 Launcher->IsRadioActivated() ?
                     m_radiodrivenlaunchers.insert( Launcher ) :
                     m_inputdrivenlaunchers.insert( Launcher ) ); }
+    inline void purge (TEventLauncher *Launcher) {
+		m_radiodrivenlaunchers.purge(Launcher);
+		m_inputdrivenlaunchers.purge(Launcher); }
     // returns first event in the queue
     inline
     basic_event *
         begin() {
             return QueryRootEvent; }
+
+	basic_event*
+	    FindEventById(uint32_t id);
+	uint32_t GetEventId(const basic_event *ev);
+	uint32_t GetEventId(std::string const &Name);
+
     // legacy method, returns pointer to specified event, or null
     basic_event *
         FindEvent( std::string const &Name );
+	inline TEventLauncher* FindEventlauncher(std::string const &Name) {
+		auto ptr = m_inputdrivenlaunchers.find(Name);
+		return ptr ? ptr : m_radiodrivenlaunchers.find(Name);
+	}
     // legacy method, inserts specified event in the event query
     bool
         AddToQuery( basic_event *Event, TDynamicObject const *Owner, double delay = 0.0 );
@@ -616,6 +697,9 @@ public:
     // sends basic content of the class in legacy (text) format to provided stream
     void
         export_as_text( std::ostream &Output ) const;
+	// returns all eventlaunchers in radius ignoring height
+	std::vector<TEventLauncher *>
+	    find_eventlaunchers(glm::vec2 center, float radius) const;
 
 private:
 // types
@@ -635,6 +719,7 @@ private:
     basic_table<TEventLauncher> m_inputdrivenlaunchers;
     basic_table<TEventLauncher> m_radiodrivenlaunchers;
     eventlauncher_sequence m_launcherqueue;
+	command_relay m_relay;
 };
 
 

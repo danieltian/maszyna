@@ -11,20 +11,16 @@ http://mozilla.org/MPL/2.0/.
 #include "editoruilayer.h"
 
 #include "Globals.h"
+#include "scenenode.h"
 #include "renderer.h"
 
 editor_ui::editor_ui() {
 
     clear_panels();
     // bind the panels with ui object. maybe not the best place for this but, eh
-    push_back( &m_itempropertiespanel );
-}
 
-// potentially processes provided input key. returns: true if key was processed, false otherwise
-bool
-editor_ui::on_key( int const Key, int const Action ) {
-
-    return false;
+    add_external_panel( &m_itempropertiespanel );
+    add_external_panel( &m_nodebankpanel );
 }
 
 // updates state of UI elements
@@ -36,7 +32,7 @@ editor_ui::update() {
     if( ( true == Global.ControlPicking )
      && ( true == DebugModeFlag ) ) {
 
-        auto const scenerynode = GfxRenderer.Pick_Node();
+        auto const scenerynode = GfxRenderer->Pick_Node();
         set_tooltip(
             ( scenerynode ?
                 scenerynode->name() :
@@ -51,4 +47,19 @@ void
 editor_ui::set_node( scene::basic_node * Node ) {
 
     m_node = Node;
+}
+
+void
+editor_ui::add_node_template(const std::string &desc) {
+	m_nodebankpanel.add_template(desc);
+}
+
+std::string const *
+editor_ui::get_active_node_template() {
+	return m_nodebankpanel.get_active_template();
+}
+
+nodebank_panel::edit_mode
+editor_ui::mode() {
+	return m_nodebankpanel.mode;
 }

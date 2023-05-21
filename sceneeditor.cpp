@@ -14,6 +14,7 @@ http://mozilla.org/MPL/2.0/.
 #include "Globals.h"
 #include "application.h"
 #include "simulation.h"
+#include "MemCell.h"
 #include "Camera.h"
 #include "AnimModel.h"
 #include "renderer.h"
@@ -23,7 +24,16 @@ namespace scene {
 void
 basic_editor::translate( scene::basic_node *Node, glm::dvec3 const &Location, bool const Snaptoground ) {
 
-    auto const initiallocation { Node->location() };
+	auto &initiallocation { Node->location() };
+
+	// fixup NaNs
+	if (std::isnan(initiallocation.x))
+		initiallocation.x = Location.x;
+	if (std::isnan(initiallocation.y))
+		initiallocation.y = Location.y;
+	if (std::isnan(initiallocation.z))
+		initiallocation.z = Location.z;
+
     auto targetlocation { Location };
     if( false == Snaptoground ) {
         targetlocation.y = initiallocation.y;
@@ -31,7 +41,8 @@ basic_editor::translate( scene::basic_node *Node, glm::dvec3 const &Location, bo
     // NOTE: bit of a waste for single nodes, for the sake of less varied code down the road
     auto const translation { targetlocation - initiallocation };
 
-    if( Node->group() == null_handle ) {
+	Node->mark_dirty();
+    if( Node->group() <= 1 ) {
         translate_node( Node, Node->location() + translation );
     }
     else {
@@ -54,7 +65,7 @@ basic_editor::translate( scene::basic_node *Node, float const Offset ) {
     auto const distance { glm::length( location - glm::dvec3{ Global.pCamera.Pos } ) };
     auto const offset { static_cast<float>( Offset * std::max( 1.0, distance * 0.01 ) ) };
 
-    if( Node->group() == null_handle ) {
+    if( Node->group() <= 1 ) {
         translate_node( Node, offset );
     }
     else {
@@ -142,15 +153,15 @@ basic_editor::rotate( scene::basic_node *Node, glm::vec3 const &Angle, float con
         rotation -= initialangle;
     }
 
-    if( Node->group() == null_handle ) {
+    if( Node->group() <= 1 ) {
         rotate_node( Node, rotation );
     }
     else {
         // rotate entire group
         // TODO: contextual switch between group and item rotation
         // TODO: translation of affected/relevant events
-        auto const rotationcenter { Node->location() };
-        auto &nodegroup { scene::Groups.group( Node->group() ).nodes };
+        auto const &rotationcenter { Node->location() };
+        auto const &nodegroup { scene::Groups.group( Node->group() ).nodes };
         std::for_each(
             std::begin( nodegroup ), std::end( nodegroup ),
             [&]( auto *node ) {

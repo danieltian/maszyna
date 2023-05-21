@@ -22,6 +22,8 @@ char logbuffer[ 256 ];
 
 char endstring[10] = "\n";
 
+std::deque<std::string> log_scrollback;
+
 std::string filename_date() {
     ::SYSTEMTIME st;
 
@@ -44,12 +46,13 @@ std::string filename_date() {
     std::snprintf(
         logbuffer,
         sizeof(logbuffer),
-        "%d%02d%02d_%02d%02d",
+	    "%d%02d%02d_%02d%02d%03d",
         st.wYear,
         st.wMonth,
         st.wDay,
         st.wHour,
-        st.wMinute );
+	    st.wMinute,
+	    st.wMilliseconds);
 
     return std::string( logbuffer );
 }
@@ -68,7 +71,7 @@ std::string filename_scenery() {
 void WriteLog( const char *str, logtype const Type ) {
 
     if( str == nullptr ) { return; }
-    if( true == TestFlag( Global.DisabledLogTypes, (int)Type ) ) { return; }
+    if( true == TestFlag( Global.DisabledLogTypes, static_cast<unsigned int>( Type ) ) ) { return; }
 
     if (Global.iWriteLogEnabled & 1) {
         if( !output.is_open() ) {
@@ -83,24 +86,30 @@ void WriteLog( const char *str, logtype const Type ) {
         output.flush();
     }
 
-#ifdef _WIN32
+    log_scrollback.emplace_back(std::string(str));
+    if (log_scrollback.size() > 200)
+        log_scrollback.pop_front();
+
     if( Global.iWriteLogEnabled & 2 ) {
+#ifdef _WIN32
         // hunter-271211: pisanie do konsoli tylko, gdy nie jest ukrywana
         SetConsoleTextAttribute( GetStdHandle( STD_OUTPUT_HANDLE ), FOREGROUND_GREEN | FOREGROUND_INTENSITY );
         DWORD wr = 0;
         WriteConsole( GetStdHandle( STD_OUTPUT_HANDLE ), str, (DWORD)strlen( str ), &wr, NULL );
         WriteConsole( GetStdHandle( STD_OUTPUT_HANDLE ), endstring, (DWORD)strlen( endstring ), &wr, NULL );
-    }
 #else
-	printf("%s\n", str);
+    printf("%s\n", str);
 #endif
+    }
 }
 
-// Ra: bezwarunkowa rejestracja poważnych błędów
 void ErrorLog( const char *str, logtype const Type ) {
 
     if( str == nullptr ) { return; }
-    if( true == TestFlag( Global.DisabledLogTypes, (int)Type ) ) { return; }
+    if( true == TestFlag( Global.DisabledLogTypes, static_cast<unsigned int>( Type ) ) ) { return; }
+
+    if (!(Global.iWriteLogEnabled & 1))
+        return;
 
     if (!errors.is_open()) {
 

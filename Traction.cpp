@@ -169,7 +169,7 @@ TTraction::endpoints() const {
 std::size_t
 TTraction::create_geometry( gfx::geometrybank_handle const &Bank ) {
     if( m_geometry != null_handle ) {
-        return GfxRenderer.Vertices( m_geometry ).size() / 2;
+        return GfxRenderer->Vertices( m_geometry ).size() / 2;
     }
 
     gfx::vertex_array vertices;
@@ -342,7 +342,7 @@ TTraction::create_geometry( gfx::geometrybank_handle const &Bank ) {
     }
 
     auto const elementcount = vertices.size() / 2;
-    m_geometry = GfxRenderer.Insert( vertices, Bank, GL_LINES );
+    m_geometry = GfxRenderer->Insert( vertices, Bank, GL_LINES );
 
     return elementcount;
 }
@@ -372,6 +372,8 @@ TTraction::Connect(int my, TTraction *with, int to) {
         // jeśli z obu stron podłączony to nie jest ostatnim
         iLast = 0;
     }
+
+    if( with == nullptr ) { return; }
 
     with->hvNext[ to ] = this;
     with->iNext[ to ] = my;
@@ -487,18 +489,21 @@ double TTraction::VoltageGet(double u, double i)
                 psPowered->CurrentGet( res ) * res :
                 0.0 );
     }
+    if( ( psPower[0] && psPower[0]->Fuse() )
+     || ( psPower[1] && psPower[1]->Fuse() ) ) {
+        // if either power source is out, so are we
+        return 0.0;
+    }
+
     double r0t, r1t, r0g, r1g;
     double i0, i1;
     r0t = fResistance[0]; //średni pomysł, ale lepsze niż nic
     r1t = fResistance[1]; // bo nie uwzględnia spadków z innych pojazdów
     if (psPower[0] && psPower[1])
     { // gdy przęsło jest zasilane z obu stron - mamy trójkąt: res, r0t, r1t
-        // yB: Gdy wywali podstacja, to zaczyna się robić nieciekawie - napięcie w sekcji na jednym
-        // końcu jest równe zasilaniu,
-        // yB: a na drugim końcu jest równe 0. Kolejna sprawa to rozróżnienie uszynienia sieci na
-        // podstacji/odłączniku (czyli
-        // yB: potencjał masy na sieci) od braku zasilania (czyli odłączenie źródła od sieci i brak
-        // jego wpływu na napięcie).
+        // yB: Gdy wywali podstacja, to zaczyna się robić nieciekawie - napięcie w sekcji na jednym końcu jest równe zasilaniu,
+        // yB: a na drugim końcu jest równe 0. Kolejna sprawa to rozróżnienie uszynienia sieci na podstacji/odłączniku (czyli
+        // yB: potencjał masy na sieci) od braku zasilania (czyli odłączenie źródła od sieci i brak jego wpływu na napięcie).
         if ((r0t > 0.0) && (r1t > 0.0))
         { // rezystancje w mianowniku nie mogą być zerowe
             r0g = res + r0t + (res * r0t) / r1t; // przeliczenie z trójkąta na gwiazdę
@@ -529,7 +534,7 @@ glm::vec3
 TTraction::wire_color() const {
 
     glm::vec3 color;
-	if( !GfxRenderer.settings.traction_debug )
+    if( !DebugTractionFlag )
     {
         switch( Material ) { // Ra: kolory podzieliłem przez 2, bo po zmianie ambient za jasne były
                              // trzeba uwzględnić kierunek świecenia Słońca - tylko ze Słońcem widać kolor
@@ -573,37 +578,21 @@ TTraction::wire_color() const {
         switch( PowerState ) {
 
             case 1: {
-                // czerwone z podłączonym zasilaniem 1
-//                color.r = 1.0f;
-//                color.g = 0.0f;
-//                color.b = 0.0f;
                 // cyan
                 color = glm::vec3 { 0.f, 174.f / 255.f, 239.f / 255.f };
                 break;
             }
             case 2: {
-                // zielone z podłączonym zasilaniem 2
-//                color.r = 0.0f;
-//                color.g = 1.0f;
-//                color.b = 0.0f;
                 // yellow
                 color = glm::vec3 { 240.f / 255.f, 228.f / 255.f, 0.f };
                 break;
             }
             case 3: {
-                //żółte z podłączonym zasilaniem z obu stron
-//                color.r = 1.0f;
-//                color.g = 1.0f;
-//                color.b = 0.0f;
                 // green
                 color = glm::vec3 { 0.f, 239.f / 255.f, 118.f / 255.f };
                 break;
             }
             case 4: {
-                // niebieskie z podłączonym zasilaniem
-//                color.r = 0.5f;
-//                color.g = 0.5f;
-//                color.b = 1.0f;
                 // white for powered, red for ends
                 color = (
                     psPowered != nullptr ?
@@ -618,46 +607,6 @@ TTraction::wire_color() const {
             color.g *= 0.6f;
             color.b *= 0.6f;
         }
-/*
-        switch( iTries ) {
-            case 0: {
-                color = glm::vec3{ 239.f / 255.f, 128.f / 255.f, 128.f / 255.f }; // red
-                break;
-            }
-            case 1: {
-                color = glm::vec3{ 240.f / 255.f, 228.f / 255.f, 0.f }; // yellow
-                break;
-            }
-            case 5: {
-                color = glm::vec3{ 0.f / 255.f, 239.f / 255.f, 118.f / 255.f }; // green
-                break;
-            }
-            default: {
-                color = glm::vec3{ 239.f / 255.f, 239.f / 255.f, 239.f / 255.f };
-                break;
-            }
-        }
-*/
-/*
-        switch( iLast ) {
-            case 0: {
-                color = glm::vec3{ 240.f / 255.f, 228.f / 255.f, 0.f }; // yellow
-                break;
-            }
-            case 1: {
-                color = glm::vec3{ 239.f / 255.f, 128.f / 255.f, 128.f / 255.f }; // red
-                break;
-            }
-            case 2: {
-                color = glm::vec3{ 0.f / 255.f, 239.f / 255.f, 118.f / 255.f }; // green
-                break;
-            }
-            default: {
-                color = glm::vec3{ 239.f / 255.f, 239.f / 255.f, 239.f / 255.f };
-                break;
-            }
-        }
-*/
     }
     return color;
 }
@@ -765,6 +714,7 @@ traction_table::InitTraction() {
                 scene::node_data nodedata;
                 nodedata.name = traction->asPowerSupplyName;
                 powersource = new TTractionPowerSource( nodedata );
+                powersource->IsAutogenerated = true;
                 powersource->Init( traction->NominalVoltage, traction->MaxCurrent );
                 simulation::Powergrid.insert( powersource );
             }

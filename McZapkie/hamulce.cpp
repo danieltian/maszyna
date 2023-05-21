@@ -118,8 +118,7 @@ double PFVd( double PH, double PL, double const S, double LIM, double const DP )
         LIM = LIM + 1;
         PH = PH + 1.0; // wyzsze cisnienie absolutne
         PL = PL + 1.0; // nizsze cisnienie absolutne
-        assert( PH != PL );
-        double sg = PL / PH; // bezwymiarowy stosunek cisnien
+        double sg = std::min( 1.0, PL / PH ); // bezwymiarowy stosunek cisnien
         double FM = PH * 197.0 * S; // najwyzszy mozliwy przeplyw, wraz z kierunkiem
         if ((PH - LIM) < 0.1)
             FM = FM * (PH - LIM) / DP; // jesli jestesmy przy nastawieniu, to zawor sie przymyka
@@ -970,6 +969,11 @@ void TEStEP1::EPCalc(double dt)
 	LBP = LBP - dv;
 }
 
+void TEStEP1::SetEPS( double const nEPS )
+{
+    EPS = nEPS;
+}
+
 //---EST3--
 
 double TESt3::GetPF( double const PP, double const dt, double const Vel )
@@ -1573,9 +1577,9 @@ double TEStED::GetPF( double const PP, double const dt, double const Vel )
 	}
 
     if ((BrakeCyl->P() > temp))
-        dv = -PFVd(BrakeCyl->P(), 0, 0.02 * SizeBC * speed, temp) * dt;
+        dv = -PFVd(BrakeCyl->P(), 0, 0.05 * SizeBC * speed, temp) * dt;
     else if ((BrakeCyl->P() < temp) && ((BrakeStatus & b_asb) == 0))
-        dv = PFVa(BVP, BrakeCyl->P(), 0.02 * SizeBC, temp) * dt;
+        dv = PFVa(BVP, BrakeCyl->P(), 0.05 * SizeBC, temp) * dt;
     else
         dv = 0;
 
@@ -1678,11 +1682,6 @@ void TEStED::SetLP( double const TM, double const LM, double const TBP )
     TareM = TM;
     LoadM = LM;
     TareBP = TBP;
-}
-
-void TEStED::SetRV(double const RVR)
-{
-	RV = RVR;
 }
 
 //---DAKO CV1---
@@ -2132,13 +2131,13 @@ double TKE::GetPF( double const PP, double const dt, double const Vel )
     if (!((typeid(*FM) == typeid(TDisk1)) ||
           (typeid(*FM) == typeid(TDisk2)))) // jesli zeliwo to schodz
         RapidStatus = ((BrakeDelayFlag & bdelay_R) == bdelay_R) &&
-                      (((Vel > 50) && (RapidStatus)) || (Vel > 70));
+                      ((RV < 0) || ((Vel > RV) && (RapidStatus)) || (Vel > (RV + 20)));
     else // jesli tarczowki, to zostan
         RapidStatus = ((BrakeDelayFlag & bdelay_R) == bdelay_R);
 
     //  temp:=1.9-0.9*int(RapidStatus);
 
-    if ((RM * RM > 0.1)) // jesli jest rapid
+    if ((RM * RM > 0.001)) // jesli jest rapid
         if ((RM > 0)) // jesli dodatni (naddatek);
             temp = 1 - RM * int(RapidStatus);
         else
@@ -2280,6 +2279,16 @@ void TDriverHandle::SetReductor(double nAdj)
 double TDriverHandle::GetCP()
 {
     return 0;
+}
+
+double TDriverHandle::GetEP()
+{
+	return 0;
+}
+
+double TDriverHandle::GetRP()
+{
+	return 0;
 }
 
 double TDriverHandle::GetSound(int i)
@@ -2557,6 +2566,11 @@ double TFV4aM::GetCP()
 	return TP;
 }
 
+double TFV4aM::GetRP()
+{
+	return 5.0 +TP * 0.08 + RedAdj;
+}
+
 double TFV4aM::LPP_RP(double pos) // cisnienie z zaokraglonej pozycji;
 {
     int const i_pos = 2 + std::floor( pos ); // zaokraglone w dol
@@ -2592,7 +2606,7 @@ double TMHZ_EN57::GetPF( double i_bcp, double PP, double HP, double dt, double e
 
     if ((TP > 0)&&(CP > 4.9))
     {
-        DP = 0.045;
+        DP = OverloadPressureDecrease;
         if (EQ(i_bcp, 0))
             TP = TP - DP * dt;
         Sounds[s_fv4a_t] = DP;
@@ -2636,7 +2650,7 @@ double TMHZ_EN57::GetPF( double i_bcp, double PP, double HP, double dt, double e
     {
         if ((TP < 5))
             TP = TP + dt; // 5/10
-        if ((TP < 1))
+        if ((TP < OverloadMaxPressure))
             TP = TP - 0.5 * dt; // 5/10
     }
 
@@ -2693,6 +2707,11 @@ double TMHZ_EN57::GetCP()
     return RP;
 }
 
+double TMHZ_EN57::GetRP()
+{
+	return 5.0 + RedAdj;
+}
+
 double TMHZ_EN57::GetEP(double pos)
 {
     if (pos < 9.5)
@@ -2711,12 +2730,14 @@ double TMHZ_EN57::LPP_RP(double pos) // cisnienie z zaokraglonej pozycji;
         return 5.0;
 }
 
-void TMHZ_EN57::SetParams(bool AO, bool MO, double OverP, double)
+void TMHZ_EN57::SetParams(bool AO, bool MO, double OverP, double, double OMP, double OPD)
 {
 	AutoOvrld = AO;
 	ManualOvrld = MO;
 	UnbrakeOverPressure = std::max(0.0, OverP);
 	Fala = (OverP > 0.01);
+	OverloadMaxPressure = OMP;
+	OverloadPressureDecrease = OPD;
 
 }
 
@@ -2747,13 +2768,13 @@ double TMHZ_K5P::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
 
 	if ((TP > 0)&&(CP>4.9))
 	{
-		DP = 0.004;
+		DP = OverloadPressureDecrease;
 		TP = TP - DP * dt;
 		Sounds[s_fv4a_t] = DP;
 	}
 	else
 	{
-		TP = 0;
+		//TP = 0; //tu nie powinno być nic, ciśnienie zostaje jak było
 	}
 	
 	if (EQ(i_bcp, 1)) //odcięcie - nie rób nic
@@ -2778,6 +2799,19 @@ double TMHZ_K5P::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
 
 	dpPipe = Min0R(HP, CP + TP + RedAdj);
 
+	if (EQ(i_bcp, -1))
+	{
+		if (Fala)
+		{
+			dpPipe = 5.0 + TP + RedAdj + uop;
+			ActFlowSpeed = 12;
+		}
+		else
+		{
+			ActFlowSpeed *= FillingStrokeFactor;
+		}
+	}
+
 	if (dpPipe > PP)
 		dpMainValve = -PFVa(HP, PP, ActFlowSpeed / LBDelay, dpPipe, 0.4);
 	else
@@ -2785,7 +2819,7 @@ double TMHZ_K5P::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
 
 	if ((EQ(i_bcp, -1) && (AutoOvrld)) || ((i_bcp<0.5) && (UniversalFlag & TUniversalBrake::ub_Overload)))
 	{
-		if ((TP < 1))
+		if ((TP < OverloadMaxPressure))
 			TP = TP + 0.03  * dt;
 	}
 
@@ -2812,8 +2846,8 @@ double TMHZ_K5P::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
 void TMHZ_K5P::Init(double Press)
 {
 	CP = Press;
-    Time = true;
-    TimeEP = true;
+	Time = true;
+	TimeEP = true;
 }
 
 void TMHZ_K5P::SetReductor(double nAdj)
@@ -2839,13 +2873,21 @@ double TMHZ_K5P::GetCP()
 	return CP;
 }
 
-void TMHZ_K5P::SetParams(bool AO, bool MO, double OverP, double)
+double TMHZ_K5P::GetRP()
+{
+	return 5.0 + TP + RedAdj;
+}
+
+void TMHZ_K5P::SetParams(bool AO, bool MO, double OverP, double FSF, double OMP, double OPD)
 {
 	AutoOvrld = AO;
 	ManualOvrld = MO;
 	UnbrakeOverPressure = std::max(0.0, OverP);
 	Fala = (OverP > 0.01);
-
+	OverloadMaxPressure = OMP;
+	OverloadPressureDecrease = OPD;
+	FillingStrokeFactor = 1 + FSF;
+	
 }
 
 bool TMHZ_K5P::EQ(double pos, double i_pos)
@@ -2875,13 +2917,13 @@ double TMHZ_6P::GetPF(double i_bcp, double PP, double HP, double dt, double ep) 
 
 	if ((TP > 0)&&(CP>4.9))
 	{
-		DP = 0.004;
+		DP = OverloadPressureDecrease;
 		TP = TP - DP * dt;
 		Sounds[s_fv4a_t] = DP;
 	}
 	else
 	{
-		TP = 0;
+		//TP = 0; //tu nie powinno być nic, ciśnienie zostaje jak było
 	}
 
 	if (EQ(i_bcp, 2)) //odcięcie - nie rób nic
@@ -2906,10 +2948,17 @@ double TMHZ_6P::GetPF(double i_bcp, double PP, double HP, double dt, double ep) 
 	if (ManualOvrld && !ManualOvrldActive) //no overpressure for not pressed button if it does not exists
 		uop = 0;
 
-	if (Fala && EQ(i_bcp, -1))
+	if (EQ(i_bcp, -1))
 	{
-		dpPipe = 5.0 + TP + RedAdj + uop;
-		ActFlowSpeed = 12;
+		if (Fala)
+		{
+			dpPipe = 5.0 + TP + RedAdj + uop;
+			ActFlowSpeed = 12;
+		}
+		else
+		{
+			ActFlowSpeed *= FillingStrokeFactor;
+		}
 	}
 
 	if (dpPipe > PP)
@@ -2919,7 +2968,7 @@ double TMHZ_6P::GetPF(double i_bcp, double PP, double HP, double dt, double ep) 
 
 	if ((EQ(i_bcp, -1) && (AutoOvrld)) || ((i_bcp<0.5) && (UniversalFlag & TUniversalBrake::ub_Overload)))
 	{
-		if ((TP < 1))
+		if ((TP < OverloadMaxPressure))
 			TP = TP + 0.03  * dt;
 	}
 
@@ -2973,12 +3022,20 @@ double TMHZ_6P::GetCP()
 	return CP;
 }
 
-void TMHZ_6P::SetParams(bool AO, bool MO, double OverP, double)
+double TMHZ_6P::GetRP()
+{
+	return 5.0 + TP + RedAdj;
+} 
+
+void TMHZ_6P::SetParams(bool AO, bool MO, double OverP, double FSF, double OMP, double OPD)
 {
 	AutoOvrld = AO;
 	ManualOvrld = MO;
 	UnbrakeOverPressure = std::max(0.0, OverP);
 	Fala = (OverP > 0.01);
+	OverloadMaxPressure = OMP;
+	OverloadPressureDecrease = OPD;
+	FillingStrokeFactor = 1 + FSF;
 
 }
 
@@ -3054,6 +3111,11 @@ double TM394::GetCP()
     return CP;
 }
 
+double TM394::GetRP()
+{
+	return std::max(5.0, CP) + RedAdj;
+}
+
 double TM394::GetPos(int i)
 {
     return pos_table[i];
@@ -3110,6 +3172,11 @@ double TH14K1::GetCP()
     return CP;
 }
 
+double TH14K1::GetRP()
+{
+    return 5.0 + RedAdj;
+}
+
 double TH14K1::GetPos(int i)
 {
     return pos_table[i];
@@ -3127,9 +3194,11 @@ double TSt113::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
     double ActFlowSpeed;
     int BCP;
 
+	CP = PP;
+
     BCP = lround(i_bcp);
 
-    EPS = BEP_K[BCP];
+    EPS = BEP_K[BCP + 1];
 
     if (BCP > 0)
         BCP = BCP - 1;
@@ -3163,7 +3232,17 @@ double TSt113::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
 
 double TSt113::GetCP()
 {
-    return EPS;
+    return CP;
+}
+
+double TSt113::GetRP()
+{
+	return 5.0 + RedAdj;
+}
+
+double TSt113::GetEP()
+{
+	return EPS;
 }
 
 double TSt113::GetPos(int i)
@@ -3295,6 +3374,8 @@ double TFVel6::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
     double dpMainValve;
     double ActFlowSpeed;
 
+	CP = PP;
+
     LimPP = Min0R(5 * int(i_bcp < 3.5), HP);
     if ((i_bcp >= 3.5) && ((i_bcp < 4.3) || (i_bcp > 5.5)))
         ActFlowSpeed = 0;
@@ -3328,7 +3409,17 @@ double TFVel6::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
 
 double TFVel6::GetCP()
 {
-    return EPS;
+    return CP;
+}
+
+double TFVel6::GetRP()
+{
+	return 5.0;
+}
+
+double TFVel6::GetEP()
+{
+	return EPS;
 }
 
 double TFVel6::GetPos(int i)
@@ -3359,6 +3450,8 @@ double TFVE408::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
 	double LimPP;
 	double dpMainValve;
 	double ActFlowSpeed;
+
+	CP = PP;
 
 	LimPP = Min0R(5 * int(i_bcp < 6.5), HP);
 	if ((i_bcp >= 6.5) && ((i_bcp < 7.5) || (i_bcp > 9.5)))
@@ -3393,7 +3486,17 @@ double TFVE408::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
 
 double TFVE408::GetCP()
 {
+	return CP;
+}
+
+double TFVE408::GetEP()
+{
 	return EPS;
+}
+
+double TFVE408::GetRP()
+{
+	return 5.0;
 }
 
 double TFVE408::GetPos(int i)

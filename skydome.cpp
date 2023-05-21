@@ -1,7 +1,10 @@
+
 #include "stdafx.h"
 #include "skydome.h"
 #include "color.h"
 #include "utilities.h"
+#include "simulationenvironment.h"
+#include "Globals.h"
 
 // sky gradient based on "A practical analytic model for daylight" 
 // by A. J. Preetham Peter Shirley Brian Smits (University of Utah)
@@ -47,8 +50,7 @@ CSkyDome::CSkyDome (int const Tesselation) :
 //	SetSunPosition( Math3D::vector3(75.0f, 0.0f, 0.0f) );
 	SetTurbidity( 3.0f );
 	SetExposure( true, 20.0f );
-	SetOvercastFactor( 0.05f );
-	SetGammaCorrection( 2.2f );
+    SetOvercastFactor( 0.05f );
     Generate();
 }
 
@@ -115,42 +117,6 @@ void CSkyDome::Update( glm::vec3 const &Sun ) {
 }
 
 // render skydome to screen
-void CSkyDome::Render() {
-
-    // cache entry state
-    ::glPushClientAttrib( GL_CLIENT_VERTEX_ARRAY_BIT );
-
-    if( m_vertexbuffer == -1 ) {
-        // build the buffers
-        ::glGenBuffers( 1, &m_vertexbuffer );
-        ::glBindBuffer( GL_ARRAY_BUFFER, m_vertexbuffer );
-        ::glBufferData( GL_ARRAY_BUFFER, m_vertices.size() * sizeof( glm::vec3 ), m_vertices.data(), GL_STATIC_DRAW );
-
-        ::glGenBuffers( 1, &m_coloursbuffer );
-        ::glBindBuffer( GL_ARRAY_BUFFER, m_coloursbuffer );
-        ::glBufferData( GL_ARRAY_BUFFER, m_colours.size() * sizeof( glm::vec3 ), m_colours.data(), GL_DYNAMIC_DRAW );
-
-        ::glGenBuffers( 1, &m_indexbuffer );
-        ::glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, m_indexbuffer );
-        ::glBufferData( GL_ELEMENT_ARRAY_BUFFER, m_indices.size() * sizeof( unsigned short ), m_indices.data(), GL_STATIC_DRAW );
-        // NOTE: vertex and index source data is superfluous past this point, but, eh
-    }
-    // begin
-    ::glEnableClientState( GL_VERTEX_ARRAY );
-    ::glEnableClientState( GL_COLOR_ARRAY );
-    // positions
-    ::glBindBuffer( GL_ARRAY_BUFFER, m_vertexbuffer );
-    ::glVertexPointer( 3, GL_FLOAT, sizeof( glm::vec3 ), reinterpret_cast<void const*>( 0 ) );
-    // colours
-    ::glBindBuffer( GL_ARRAY_BUFFER, m_coloursbuffer );
-    ::glColorPointer( 3, GL_FLOAT, sizeof( glm::vec3 ), reinterpret_cast<void const*>( 0 ) );
-    // indices
-    ::glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, m_indexbuffer );
-    ::glDrawElements( GL_TRIANGLES, static_cast<GLsizei>( m_indices.size() ), GL_UNSIGNED_SHORT, reinterpret_cast<void const*>( 0 ) );
-    // cleanup
-    ::glPopClientAttrib();
-}
-
 bool CSkyDome::SetSunPosition( glm::vec3 const &Direction ) {
 
     if( Direction == m_sundirection ) {
@@ -159,7 +125,7 @@ bool CSkyDome::SetSunPosition( glm::vec3 const &Direction ) {
     }
 
     m_sundirection = Direction;
-	m_thetasun = std::acos( m_sundirection.y );
+    m_thetasun = std::acos( m_sundirection.y );
 	m_phisun = std::atan2( m_sundirection.z, m_sundirection.x );
 
     return true;
@@ -175,11 +141,6 @@ void CSkyDome::SetExposure( bool const Linearexposure, float const Expfactor ) {
 
 	m_linearexpcontrol = Linearexposure;
 	m_expfactor = 1.0f / clamp( Expfactor, 1.0f, std::numeric_limits<float>::infinity() );
-}
-
-void CSkyDome::SetGammaCorrection( float const Gamma ) {
-
-	m_gammacorrection = 1.0f / clamp( Gamma, std::numeric_limits<float>::epsilon(), std::numeric_limits<float>::infinity() );		
 }
 
 void CSkyDome::SetOvercastFactor( float const Overcast ) {
@@ -223,6 +184,9 @@ float CSkyDome::PerezFunctionO2( float Perezcoeffs[ 5 ], const float Icostheta, 
 }
 
 void CSkyDome::RebuildColors() {
+
+    float twilightfactor = clamp( -simulation::Environment.sun().getAngle(), 0.0f, 18.0f ) / 18.0f;
+    auto gammacorrection = interpolate( glm::vec3( 0.45f ), glm::vec3( 1.0f ), twilightfactor );
 
 	// get zenith luminance
 	float const chi = ( (4.0f / 9.0f) - (m_turbidity / 120.0f) ) * ( M_PI - (2.0f * m_thetasun) );
@@ -295,9 +259,14 @@ void CSkyDome::RebuildColors() {
 			colorconverter.z = 1.0f - std::exp( -m_expfactor * colorconverter.z );  
 		}
 
+        if( colorconverter.z > 0.85f ) {
+            colorconverter.z = 0.85f + ( colorconverter.z - 0.85f ) * 0.35f;
+        }
+
+        colorconverter.y = clamp( colorconverter.y * Global.m_skysaturationcorrection, 0.0f, 1.0f );
         // desaturate sky colour, based on overcast level
         if( colorconverter.y > 0.0f ) {
-            colorconverter.y *= ( 1.0f - m_overcast );
+            colorconverter.y *= ( 1.0f - 0.5f * m_overcast );
         }
 
         // override the hue, based on sun height above the horizon. crude way to deal with model shortcomings
@@ -314,13 +283,8 @@ void CSkyDome::RebuildColors() {
 
 		color = colors::HSVtoRGB(colorconverter);
 
-        color = interpolate( color, shiftedcolor, shiftfactor );
-/*
-		// gamma control
-		color.x = std::pow( color.x, m_gammacorrection );
-		color.x = std::pow( color.y, m_gammacorrection );
-		color.x = std::pow( color.z, m_gammacorrection );
-*/
+        color = interpolate( color, shiftedcolor, shiftfactor * Global.m_skyhuecorrection );
+
         // crude correction for the times where the model breaks (late night)
         // TODO: use proper night sky calculation for these times instead
         if( ( color.x <= 0.05f )
@@ -330,33 +294,25 @@ void CSkyDome::RebuildColors() {
             color.z = 0.75f * std::max( color.z + m_sundirection.y, 0.075f );
             color.x = 0.20f * color.z; 
             color.y = 0.65f * color.z;
-            color = color * ( 1.15f - vertex.y ); // simple gradient, darkening towards the top
         }
-		// save
+        // simple gradient, darkening towards the top
+        color *= clamp( ( 1.25f - vertex.y ), 0.f, 1.f );
+//        color *= ( 1.25f - vertex.y );
+        // gamma correction
+        color = glm::pow( color, gammacorrection );
         m_colours[ i ] = color;
         averagecolor += color;
-        if( ( m_vertices.size() - i ) <= ( m_tesselation * 2 ) ) {
+        if( ( m_vertices.size() - i ) <= ( m_tesselation * 3 + 3 ) ) {
             // calculate horizon colour from the bottom band of tris
             averagehorizoncolor += color;
         }
 	}
-    // NOTE: average reduced to 25% makes nice tint value for clouds lit from behind
-    // down the road we could interpolate between it and full strength average, to improve accuracy of cloud appearance
-    m_averagecolour = glm::max( glm::vec3(), averagecolor / static_cast<float>( m_vertices.size() ) );
-    m_averagehorizoncolour = glm::max( glm::vec3(), averagehorizoncolor / static_cast<float>( m_tesselation * 2 ) );
 
-    if( m_coloursbuffer != -1 ) {
-        // the colour buffer was already initialized, so on this run we update its content
-        // cache entry state
-        ::glPushClientAttrib( GL_CLIENT_VERTEX_ARRAY_BIT );
-        // begin
-        ::glEnableClientState( GL_VERTEX_ARRAY );
-        // update
-        ::glBindBuffer( GL_ARRAY_BUFFER, m_coloursbuffer );
-        ::glBufferSubData( GL_ARRAY_BUFFER, 0, m_colours.size() * sizeof( glm::vec3 ), m_colours.data() );
-        // cleanup
-        ::glPopClientAttrib();
-    }
+    m_averagecolour = glm::max( glm::vec3(), averagecolor / static_cast<float>( m_vertices.size() ) );
+    m_averagehorizoncolour = glm::max( glm::vec3(), averagehorizoncolor / static_cast<float>( m_tesselation * 3 + 3 ) );
+
+    m_dirty = true;
 }
 
 //******************************************************************************//
+

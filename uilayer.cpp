@@ -13,59 +13,84 @@ http://mozilla.org/MPL/2.0/.
 #include "Globals.h"
 #include "renderer.h"
 #include "Logs.h"
+#include "Timer.h"
+#include "simulation.h"
+#include "translation.h"
+#include "application.h"
 
 #include "imgui/imgui_impl_glfw.h"
-#ifdef EU07_USEIMGUIIMPLOPENGL2
 #include "imgui/imgui_impl_opengl2.h"
-#else
 #include "imgui/imgui_impl_opengl3.h"
-#endif
 
-#ifdef _WIN32
-extern "C"
-{
-	GLFWAPI HWND glfwGetWin32Window( GLFWwindow* window );
-}
-#endif
-
-GLFWwindow * ui_layer::m_window { nullptr };
-ImGuiIO *ui_layer::m_imguiio { nullptr };
+GLFWwindow *ui_layer::m_window{nullptr};
+ImGuiIO *ui_layer::m_imguiio{nullptr};
 GLint ui_layer::m_textureunit { GL_TEXTURE0 };
-bool ui_layer::m_cursorvisible { true };
+bool ui_layer::m_cursorvisible;
+ImFont *ui_layer::font_default{nullptr};
+ImFont *ui_layer::font_mono{nullptr};
 
-ui_panel::ui_panel( std::string const &Identifier, bool const Isopen )
-    : name( Identifier ), is_open( Isopen )
-{}
+ui_panel::ui_panel(std::string const &Identifier, bool const Isopen) : m_name(Identifier), is_open(Isopen) {}
 
-void
-ui_panel::render() {
+void ui_panel::render()
+{
+    if (false == is_open)
+        return;
 
-    if( false == is_open ) { return; }
-    if( true  == text_lines.empty() ) { return; }
+	int flags = window_flags;
+	if (flags == -1)
+		flags = ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoCollapse |
+		        ((size.x > 0) ? ImGuiWindowFlags_NoResize : 0);
 
-    auto flags =
-        ImGuiWindowFlags_NoFocusOnAppearing
-        | ImGuiWindowFlags_NoCollapse
-        | ( size.x > 0 ? ImGuiWindowFlags_NoResize : 0 );
+    if (size.x > 0)
+        ImGui::SetNextWindowSize(ImVec2S(size.x, size.y));
+	else if (size_min.x == -1)
+        ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_FirstUseEver);
 
-    if( size.x > 0 ) {
-        ImGui::SetNextWindowSize( ImVec2( size.x, size.y ) );
-    }
-    if( size_min.x > 0 ) {
-        ImGui::SetNextWindowSizeConstraints( ImVec2( size_min.x, size_min.y ), ImVec2( size_max.x, size_max.y ) );
-    }
+    if (size_min.x > 0)
+        ImGui::SetNextWindowSizeConstraints(ImVec2S(size_min.x, size_min.y), ImVec2S(size_max.x, size_max.y));
 
-    auto const panelname { (
-        title.empty() ?
-            name :
-            title )
-        + "###" + name };
-    if( true == ImGui::Begin( panelname.c_str(), &is_open, flags ) ) {
-        for( auto const &line : text_lines ) {
-            ImGui::TextColored( ImVec4( line.color.r, line.color.g, line.color.b, line.color.a ), line.data.c_str() );
-        }
-    }
+	auto const panelname{(title.empty() ? m_name : title) + "###" + m_name};
+	if (ImGui::Begin(panelname.c_str(), &is_open, flags)) {
+        render_contents();
+
+		popups.remove_if([](std::unique_ptr<ui::popup> &popup)
+		{
+			return popup->render();
+		});
+	}
+
     ImGui::End();
+}
+
+void ui_panel::render_contents()
+{
+    for (auto const &line : text_lines)
+    {
+        ImGui::TextColored(ImVec4(line.color.r, line.color.g, line.color.b, line.color.a), line.data.c_str());
+    }
+}
+
+void ui_panel::register_popup(std::unique_ptr<ui::popup> &&popup)
+{
+	popups.push_back(std::move(popup));
+}
+
+void ui_expandable_panel::render_contents()
+{
+    ImGui::Checkbox(STR_C("expand"), &is_expanded);
+    ui_panel::render_contents();
+}
+
+void ui_log_panel::render_contents()
+{
+	ImGui::PushFont(ui_layer::font_mono);
+
+    for (const std::string &s : log_scrollback)
+        ImGui::TextUnformatted(s.c_str());
+    if (ImGui::GetScrollY() == ImGui::GetScrollMaxY())
+		ImGui::SetScrollHereY(1.0f);
+
+	ImGui::PopFont();
 }
 
 ui_layer::~ui_layer() {}
@@ -94,299 +119,420 @@ bool ui_layer::mouse_button_callback(int button, int action, int mods)
     return m_imguiio->WantCaptureMouse;
 }
 
-bool
-ui_layer::init( GLFWwindow *Window ) {
+ui_layer::ui_layer()
+{
+    if (Global.loading_log)
+		add_external_panel(&m_logpanel);
+    m_logpanel.size = { 700, 400 };
+}
 
+void::ui_layer::load_random_background()
+{
+	std::vector<std::string> images;
+	for (auto &f : std::filesystem::directory_iterator("textures/logo"))
+		if (f.is_regular_file())
+			images.emplace_back(std::filesystem::relative(f.path(), "textures/").string());
+
+	if (!images.empty()) {
+		std::string &selected = images[std::lround(LocalRandom(images.size() - 1))];
+		set_background(selected);
+	}
+}
+
+static ImVec4 imvec_lerp(const ImVec4& a, const ImVec4& b, float t)
+{
+	return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
+}
+
+void ui_layer::imgui_style()
+{
+	ImVec4* colors = ImGui::GetStyle().Colors;
+
+	colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+	colors[ImGuiCol_TextDisabled] = ImVec4(0.35f, 0.35f, 0.35f, 1.00f);
+	colors[ImGuiCol_WindowBg] = ImVec4(0.04f, 0.04f, 0.04f, 0.94f);
+	colors[ImGuiCol_ChildBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+	colors[ImGuiCol_PopupBg] = ImVec4(0.06f, 0.06f, 0.06f, 0.94f);
+	colors[ImGuiCol_Border] = ImVec4(0.31f, 0.34f, 0.31f, 0.50f);
+	colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+	colors[ImGuiCol_FrameBg] = ImVec4(0.21f, 0.28f, 0.17f, 0.54f);
+	colors[ImGuiCol_FrameBgHovered] = ImVec4(0.42f, 0.64f, 0.23f, 0.40f);
+	colors[ImGuiCol_FrameBgActive] = ImVec4(0.42f, 0.64f, 0.23f, 0.67f);
+	colors[ImGuiCol_TitleBg] = ImVec4(0.03f, 0.03f, 0.03f, 1.00f);
+	colors[ImGuiCol_TitleBgActive] = ImVec4(0.21f, 0.28f, 0.17f, 1.00f);
+	colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.00f, 0.00f, 0.51f);
+	colors[ImGuiCol_MenuBarBg] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
+	colors[ImGuiCol_ScrollbarBg] = ImVec4(0.01f, 0.01f, 0.01f, 0.53f);
+	colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.22f, 0.22f, 0.22f, 1.00f);
+	colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.29f, 0.29f, 0.29f, 1.00f);
+	colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.36f, 0.36f, 0.36f, 1.00f);
+	colors[ImGuiCol_CheckMark] = ImVec4(0.42f, 0.64f, 0.23f, 1.00f);
+	colors[ImGuiCol_SliderGrab] = ImVec4(0.37f, 0.53f, 0.25f, 1.00f);
+	colors[ImGuiCol_SliderGrabActive] = ImVec4(0.42f, 0.64f, 0.23f, 1.00f);
+	colors[ImGuiCol_Button] = ImVec4(0.42f, 0.64f, 0.23f, 0.40f);
+	colors[ImGuiCol_ButtonHovered] = ImVec4(0.42f, 0.64f, 0.23f, 1.00f);
+	colors[ImGuiCol_ButtonActive] = ImVec4(0.37f, 0.54f, 0.19f, 1.00f);
+	colors[ImGuiCol_Header] = ImVec4(0.42f, 0.64f, 0.23f, 0.31f);
+	colors[ImGuiCol_HeaderHovered] = ImVec4(0.42f, 0.64f, 0.23f, 0.80f);
+	colors[ImGuiCol_HeaderActive] = ImVec4(0.42f, 0.64f, 0.23f, 1.00f);
+	colors[ImGuiCol_SeparatorHovered] = ImVec4(0.29f, 0.41f, 0.18f, 0.78f);
+	colors[ImGuiCol_SeparatorActive] = ImVec4(0.29f, 0.41f, 0.18f, 1.00f);
+	colors[ImGuiCol_ResizeGrip] = ImVec4(0.42f, 0.64f, 0.23f, 0.25f);
+	colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.42f, 0.64f, 0.23f, 0.67f);
+	colors[ImGuiCol_ResizeGripActive] = ImVec4(0.42f, 0.64f, 0.23f, 0.95f);
+	colors[ImGuiCol_PlotLines] = ImVec4(0.61f, 0.61f, 0.61f, 1.00f);
+	colors[ImGuiCol_PlotLinesHovered] = ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
+	colors[ImGuiCol_PlotHistogram] = ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
+
+	colors[ImGuiCol_PlotHistogramHovered] = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);
+	colors[ImGuiCol_TextSelectedBg] = ImVec4(0.42f, 0.64f, 0.23f, 0.35f);
+	colors[ImGuiCol_DragDropTarget] = ImVec4(1.00f, 1.00f, 0.00f, 0.90f);
+	colors[ImGuiCol_NavHighlight] = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
+	colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
+	colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
+	colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
+
+	colors[ImGuiCol_Separator] = colors[ImGuiCol_Border];
+	colors[ImGuiCol_Tab] = imvec_lerp(colors[ImGuiCol_Header], colors[ImGuiCol_TitleBgActive], 0.80f);
+	colors[ImGuiCol_TabHovered] = colors[ImGuiCol_HeaderHovered];
+	colors[ImGuiCol_TabActive] = imvec_lerp(colors[ImGuiCol_HeaderActive], colors[ImGuiCol_TitleBgActive], 0.60f);
+	colors[ImGuiCol_TabUnfocused] = imvec_lerp(colors[ImGuiCol_Tab], colors[ImGuiCol_TitleBg], 0.80f);
+	colors[ImGuiCol_TabUnfocusedActive] = imvec_lerp(colors[ImGuiCol_TabActive], colors[ImGuiCol_TitleBg], 0.40f);
+
+    ImGui::GetStyle().ScaleAllSizes(Global.ui_scale);
+}
+
+bool ui_layer::init(GLFWwindow *Window)
+{
     m_window = Window;
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    m_imguiio = &ImGui::GetIO();
 
-    static ImWchar const glyphranges[] = {
-        0x0020, 0x00FF, // ascii + extension
+	m_imguiio->ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+    // m_imguiio->ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    // m_imguiio->ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+
+    static const ImWchar ranges[] =
+    {
+        0x0020, 0x00FF, // Basic Latin + Latin Supplement
+        0x0100, 0x017F, // Latin Extended-A
         0x2070, 0x2079, // superscript
         0x2500, 0x256C, // box drawings
         0,
     };
-    m_imguiio = &ImGui::GetIO();
-    m_imguiio->Fonts->AddFontFromFileTTF( "fonts/dejavusansmono.ttf", 13.0f, nullptr, &glyphranges[ 0 ] );
 
-    ImGui::StyleColorsClassic();
-    ImGui_ImplGlfw_InitForOpenGL(m_window);
-#ifdef EU07_USEIMGUIIMPLOPENGL2
-    ImGui_ImplOpenGL2_Init();
-    ImGui_ImplOpenGL2_NewFrame();
-#else
-    ImGui_ImplOpenGL3_Init("#version 130");
-    ImGui_ImplOpenGL3_NewFrame();
-#endif
+	if (FileExists("fonts/dejavusans.ttf"))
+        font_default = m_imguiio->Fonts->AddFontFromFileTTF("fonts/dejavusans.ttf", Global.ui_fontsize, nullptr, &ranges[0]);
+	if (FileExists("fonts/dejavusansmono.ttf"))
+        font_mono = m_imguiio->Fonts->AddFontFromFileTTF("fonts/dejavusansmono.ttf", Global.ui_fontsize, nullptr, &ranges[0]);
 
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
+	if (!font_default && !font_mono)
+		font_default = font_mono = m_imguiio->Fonts->AddFontDefault();
+	else if (!font_default)
+		font_default = font_mono;
+	else if (!font_mono)
+		font_mono = font_default;
+
+	imgui_style();
+
+    ImGui_ImplGlfw_InitForOpenGL(m_window, false);
+	if (Global.LegacyRenderer) {
+		crashreport_add_info("imgui_ver", "gl2");
+		ImGui_ImplOpenGL2_Init();
+	} else {
+	    crashreport_add_info("imgui_ver", "gl3");
+	    if (Global.gfx_usegles)
+	        ImGui_ImplOpenGL3_Init("#version 300 es\nprecision highp float;");
+	    else
+	        ImGui_ImplOpenGL3_Init("#version 330 core");
+	}
 
     return true;
 }
 
-void
-ui_layer::shutdown() {
+void ui_layer::shutdown()
+{
     ImGui::EndFrame();
 
-#ifdef EU07_USEIMGUIIMPLOPENGL2
-    ImGui_ImplOpenGL2_Shutdown();
-#else
-    ImGui_ImplOpenGL3_Shutdown();
-#endif
+    if (Global.LegacyRenderer)
+        ImGui_ImplOpenGL2_Shutdown();
+    else
+        ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 }
 
-bool
-ui_layer::on_key( int const Key, int const Action ) {
+bool ui_layer::on_key(int const Key, int const Action)
+{
+    if (Action == GLFW_PRESS)
+    {
+        if (Key == GLFW_KEY_PRINT_SCREEN) {
+            Application.queue_screenshot();
+            return true;
+        }
 
-    return false;
-}
+        if (Key == GLFW_KEY_F9) {
+            m_logpanel.is_open = !m_logpanel.is_open;
+            return true;
+        }
 
-bool
-ui_layer::on_cursor_pos( double const Horizontal, double const Vertical ) {
+        if (Key == GLFW_KEY_F10) {
+            m_quit_active = !m_quit_active;
+            return true;
+        }
 
-    return false;
-}
-
-bool
-ui_layer::on_mouse_button( int const Button, int const Action ) {
-
-    return false;
-}
-
-void
-ui_layer::update() {
-
-    for( auto *panel : m_panels ) {
-        panel->update();
+        if (m_quit_active)
+        {
+            if (Key == GLFW_KEY_Y) {
+                Application.queue_quit(false);
+                return true;
+            } else if (Key == GLFW_KEY_N) {
+                m_quit_active = false;
+                return true;
+            }
+        }
     }
+
+    return false;
 }
 
-void
-ui_layer::render() {
-	glMatrixMode(GL_PROJECTION);
-	glLoadIdentity();
-	glOrtho( 0, std::max( 1, Global.iWindowWidth ), std::max( 1, Global.iWindowHeight ), 0, -1, 1 );
+bool ui_layer::on_cursor_pos(double const Horizontal, double const Vertical)
+{
+    return false;
+}
 
-	glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
+bool ui_layer::on_mouse_button(int const Button, int const Action)
+{
+    return false;
+}
 
-    glPushAttrib( GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT ); // blendfunc included since 3rd party gui doesn't play nice
-	glDisable( GL_LIGHTING );
-	glDisable( GL_DEPTH_TEST );
-	glDisable( GL_ALPHA_TEST );
-    glEnable( GL_TEXTURE_2D );
-    glEnable( GL_BLEND );
+void ui_layer::update()
+{
+    for (auto *panel : m_panels)
+        panel->update();
 
-    ::glColor4fv( glm::value_ptr( colors::white ) );
+	for (auto it = m_ownedpanels.rbegin(); it != m_ownedpanels.rend(); it++) {
+		(*it)->update();
+		if (!(*it)->is_open)
+			m_ownedpanels.erase(std::next(it).base());
+	}
+}
 
-    // render code here
+void ui_layer::render()
+{
     render_background();
-    render_texture();
-
-    glDisable( GL_TEXTURE_2D );
-    glDisable( GL_TEXTURE_CUBE_MAP );
-
     render_progress();
-
-    glDisable( GL_BLEND );
-
-    glPopAttrib();
-
     render_panels();
     render_tooltip();
+    render_menu();
+    render_quit_widget();
+
     // template method implementation
     render_();
 
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+	gl::buffer::unbind(gl::buffer::ARRAY_BUFFER);
+    render_internal();
+}
+
+void ui_layer::render_internal()
+{
     ImGui::Render();
-#ifdef EU07_USEIMGUIIMPLOPENGL2
-    ImGui_ImplOpenGL2_RenderDrawData(ImGui::GetDrawData());
-    ImGui_ImplOpenGL2_NewFrame();
-#else
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    ImGui_ImplOpenGL3_NewFrame();
-#endif
 
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
+    if (Global.LegacyRenderer)
+        ImGui_ImplOpenGL2_RenderDrawData(ImGui::GetDrawData());
+    else
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
-void
-ui_layer::set_cursor( int const Mode ) {
-
-    glfwSetInputMode( m_window, GLFW_CURSOR, Mode );
-    m_cursorvisible = ( Mode != GLFW_CURSOR_DISABLED );
+void ui_layer::begin_ui_frame()
+{
+    begin_ui_frame_internal();
 }
 
-void
-ui_layer::set_progress( float const Progress, float const Subtaskprogress ) {
+void ui_layer::begin_ui_frame_internal()
+{
+	if (Global.LegacyRenderer)
+		ImGui_ImplOpenGL2_NewFrame();
+	else
+		ImGui_ImplOpenGL3_NewFrame();
+	ImGui_ImplGlfw_NewFrame();
+	ImGui::NewFrame();
+}
 
+void ui_layer::render_quit_widget()
+{
+    if (!m_quit_active)
+        return;
+
+    ImGui::SetNextWindowSize(ImVec2(0, 0));
+    ImGui::Begin(STR_C("Quit"), &m_quit_active, ImGuiWindowFlags_NoResize);
+    ImGui::TextUnformatted(STR_C("Quit simulation?"));
+    if (ImGui::Button(STR_C("Yes")))
+        Application.queue_quit(false);
+
+    ImGui::SameLine();
+    if (ImGui::Button(STR_C("No")))
+        m_quit_active = false;
+    ImGui::End();
+}
+
+void ui_layer::set_cursor(int const Mode)
+{
+    glfwSetInputMode(m_window, GLFW_CURSOR, Mode);
+    m_cursorvisible = (Mode != GLFW_CURSOR_DISABLED);
+}
+
+void ui_layer::set_progress(float const Progress, float const Subtaskprogress)
+{
     m_progress = Progress * 0.01f;
     m_subtaskprogress = Subtaskprogress * 0.01f;
 }
 
-void
-ui_layer::set_background( std::string const &Filename ) {
-
-    if( false == Filename.empty() ) {
-        m_background = GfxRenderer.Fetch_Texture( Filename );
+void ui_layer::set_background(std::string const &Filename)
+{
+    if (false == Filename.empty())
+    {
+        m_background = GfxRenderer->Fetch_Texture(Filename);
     }
-    else {
+    else
+    {
         m_background = null_handle;
     }
-
-    if( m_background != null_handle ) {
-        auto const &texture = GfxRenderer.Texture( m_background );
-        m_progressbottom = ( texture.width() != texture.height() );
-    }
-    else {
-        m_progressbottom = true;
+    if (m_background != null_handle)
+    {
+        auto const &texture = GfxRenderer->Texture(m_background);
     }
 }
 
-void
-ui_layer::render_progress() {
+void ui_layer::clear_panels()
+{
+    m_panels.clear();
+	m_ownedpanels.clear();
+}
 
-	if( (m_progress == 0.0f) && (m_subtaskprogress == 0.0f) ) return;
+void ui_layer::add_owned_panel(ui_panel *Panel)
+{
+	for (auto &panel : m_ownedpanels)
+		if (panel->name() == Panel->name()) {
+			delete Panel;
+			return;
+		}
 
-    glm::vec2 origin, size;
-    if( m_progressbottom == true ) {
-        origin = glm::vec2{ 0.0f, 768.0f - 20.0f };
-        size   = glm::vec2{ 1024.0f, 20.0f };
+	Panel->is_open = true;
+	m_ownedpanels.emplace_back( Panel );
+}
+
+void ui_layer::render_progress()
+{
+    if ((m_progress == 0.0f) && (m_subtaskprogress == 0.0f))
+        return;
+
+    ImGui::SetNextWindowPos(ImVec2(50, 50));
+    ImGui::SetNextWindowSize(ImVec2(0, 0));
+    ImGui::Begin(STR_C("Loading"), nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+    if (!m_progresstext.empty())
+        ImGui::ProgressBar(m_progress, ImVec2(300, 0), m_progresstext.c_str());
+    else
+        ImGui::ProgressBar(m_progress, ImVec2(300, 0));
+    ImGui::ProgressBar(m_subtaskprogress, ImVec2(300, 0));
+    ImGui::End();
+}
+
+void ui_layer::render_panels()
+{
+    for (auto *panel : m_panels)
+		panel->render();
+	for (auto &panel : m_ownedpanels)
+		panel->render();
+
+	if (m_imgui_demo)
+		ImGui::ShowDemoWindow(&m_imgui_demo);
+}
+
+void ui_layer::render_tooltip()
+{
+	if (!m_cursorvisible || m_imguiio->WantCaptureMouse || m_tooltip.empty())
+        return;
+
+    ImGui::BeginTooltip();
+    ImGui::TextUnformatted(m_tooltip.c_str());
+    ImGui::EndTooltip();
+}
+
+void ui_layer::render_menu_contents()
+{
+	if (ImGui::BeginMenu(STR_C("General")))
+    {
+        ImGui::MenuItem(STR_C("Debug mode"), nullptr, &DebugModeFlag);
+        ImGui::MenuItem(STR_C("Quit"), "F10", &m_quit_active);
+        ImGui::EndMenu();
     }
-    else {
-        origin = glm::vec2{ 75.0f, 640.0f };
-        size   = glm::vec2{ 320.0f, 16.0f };
-    }
+    if (ImGui::BeginMenu(STR_C("Tools")))
+    {
+        static bool log = Global.iWriteLogEnabled & 1;
 
-    quad( glm::vec4( origin.x, origin.y, origin.x + size.x, origin.y + size.y ), glm::vec4(0.0f, 0.0f, 0.0f, 0.25f) );
-    // secondary bar
-    if( m_subtaskprogress ) {
-        quad(
-            glm::vec4( origin.x, origin.y, origin.x + size.x * m_subtaskprogress, origin.y + size.y),
-            glm::vec4( 8.0f/255.0f, 160.0f/255.0f, 8.0f/255.0f, 0.35f ) );
-    }
-    // primary bar
-	if( m_progress ) {
-        quad(
-            glm::vec4( origin.x, origin.y, origin.x + size.x * m_progress, origin.y + size.y ),
-            glm::vec4( 8.0f / 255.0f, 160.0f / 255.0f, 8.0f / 255.0f, 1.0f ) );
-    }
+        ImGui::MenuItem(STR_C("Logging to log.txt"), nullptr, &log);
+        if (log)
+            Global.iWriteLogEnabled |= 1;
+        else
+            Global.iWriteLogEnabled &= ~1;
 
-    if( false == m_progresstext.empty() ) {
-        float const screenratio = static_cast<float>( Global.iWindowWidth ) / Global.iWindowHeight;
-        float const width =
-            ( screenratio >= (4.0f/3.0f) ?
-                ( 4.0f / 3.0f ) * Global.iWindowHeight :
-                Global.iWindowWidth );
-        float const heightratio =
-            ( screenratio >= ( 4.0f / 3.0f ) ?
-                Global.iWindowHeight / 768.f :
-                Global.iWindowHeight / 768.f * screenratio / ( 4.0f / 3.0f ) );
-        float const height = 768.0f * heightratio;
+        if (ImGui::MenuItem(STR_C("Screenshot"), "PrtScr"))
+            Application.queue_screenshot();
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu(STR_C("Windows")))
+    {
+        ImGui::MenuItem(STR_C("Log"), "F9", &m_logpanel.is_open);
+		if (DebugModeFlag) {
+			ImGui::MenuItem(STR_C("ImGui Demo"), nullptr, &m_imgui_demo);
+            bool ret = ImGui::MenuItem(STR_C("Headlight config"), nullptr, GfxRenderer->Debug_Ui_State(std::nullopt));
 
-        ::glColor4f( 216.0f / 255.0f, 216.0f / 255.0f, 216.0f / 255.0f, 1.0f );
-        auto const charsize = 9.0f;
-        auto const textwidth = m_progresstext.size() * charsize;
-        auto const textheight = 12.0f;
-        ::glRasterPos2f(
-            ( 0.5f * ( Global.iWindowWidth  - width )  + origin.x * heightratio ) + ( ( size.x * heightratio - textwidth ) * 0.5f * heightratio ),
-            ( 0.5f * ( Global.iWindowHeight - height ) + origin.y * heightratio ) + ( charsize ) + ( ( size.y * heightratio - textheight ) * 0.5f * heightratio ) );
+            GfxRenderer->Debug_Ui_State(ret);
+		}
+        ImGui::EndMenu();
     }
 }
 
-void
-ui_layer::render_panels() {
+void ui_layer::render_menu()
+{
+    glm::dvec2 mousepos = Global.cursor_pos;
 
-    for( auto *panel : m_panels ) {
-        panel->render();
+    if (!((Global.ControlPicking && mousepos.y < 50.0f) || m_imguiio->WantCaptureMouse) || m_progress != 0.0f)
+        return;
+
+    if (ImGui::BeginMainMenuBar())
+    {
+        render_menu_contents();
+        ImGui::EndMainMenuBar();
     }
 }
 
-void
-ui_layer::render_tooltip() {
+void ui_layer::render_background()
+{
+    if (m_background == 0)
+        return;
 
-    if( m_tooltip.empty() ) { return; }
-    if( false == m_cursorvisible ) { return; }
+    ImVec2 display_size = ImGui::GetIO().DisplaySize;
+    ImVec2 image_size;
+    ImVec2 start_position;
+    ImVec2 end_position;
 
-    ImGui::SetTooltip( m_tooltip.c_str() );
-}
+    opengl_texture &tex = GfxRenderer->Texture(m_background);
+    tex.create();
 
-void
-ui_layer::render_background() {
-
-	if( m_background == 0 ) return;
-    // NOTE: we limit/expect the background to come with 4:3 ratio.
-    // TODO, TBD: if we expose texture width or ratio from texture object, this limitation could be lifted
-    GfxRenderer.Bind_Texture( m_background );
-    auto const height { 768.0f };
-    auto const &texture = GfxRenderer.Texture( m_background );
-    float const width = (
-        texture.width() == texture.height() ?
-            1024.0f : // legacy mode, square texture displayed as 4:3 image
-            texture.width() / ( texture.height() / 768.0f ) );
-    quad(
-        glm::vec4(
-            ( 1024.0f * 0.5f ) - ( width  * 0.5f ),
-            (  768.0f * 0.5f ) - ( height * 0.5f ),
-            ( 1024.0f * 0.5f ) - ( width  * 0.5f ) + width,
-            (  768.0f * 0.5f ) - ( height * 0.5f ) + height ),
-        colors::white );
-}
-
-void
-ui_layer::render_texture() {
-
-    if( m_texture != 0 ) {
-        ::glColor4fv( glm::value_ptr( colors::white ) );
-
-        GfxRenderer.Bind_Texture( null_handle );
-        ::glBindTexture( GL_TEXTURE_2D, m_texture );
-
-        auto const size = 512.f;
-        auto const offset = 64.f;
-
-        glBegin( GL_TRIANGLE_STRIP );
-
-        glMultiTexCoord2f( m_textureunit, 0.f, 1.f ); glVertex2f( offset, Global.iWindowHeight - offset - size );
-        glMultiTexCoord2f( m_textureunit, 0.f, 0.f ); glVertex2f( offset, Global.iWindowHeight - offset );
-        glMultiTexCoord2f( m_textureunit, 1.f, 1.f ); glVertex2f( offset + size, Global.iWindowHeight - offset - size );
-        glMultiTexCoord2f( m_textureunit, 1.f, 0.f ); glVertex2f( offset + size, Global.iWindowHeight - offset );
-
-        glEnd();
-
-        ::glBindTexture( GL_TEXTURE_2D, 0 );
-    }
-}
-
-void
-
-ui_layer::quad( glm::vec4 const &Coordinates, glm::vec4 const &Color ) {
-
-    float const screenratio = static_cast<float>( Global.iWindowWidth ) / Global.iWindowHeight;
-    float const width =
-        ( screenratio >= ( 4.f / 3.f ) ?
-            ( 4.f / 3.f ) * Global.iWindowHeight :
-            Global.iWindowWidth );
-    float const heightratio =
-        ( screenratio >= ( 4.f / 3.f ) ?
-            Global.iWindowHeight / 768.f :
-            Global.iWindowHeight / 768.f * screenratio / ( 4.f / 3.f ) );
-    float const height = 768.f * heightratio;
-
-    glColor4fv(glm::value_ptr(Color));
-
-    glBegin( GL_TRIANGLE_STRIP );
-
-    glMultiTexCoord2f( m_textureunit, 0.f, 1.f ); glVertex2f( 0.5f * ( Global.iWindowWidth - width ) + Coordinates.x * heightratio, 0.5f * ( Global.iWindowHeight - height ) + Coordinates.y * heightratio );
-    glMultiTexCoord2f( m_textureunit, 0.f, 0.f ); glVertex2f( 0.5f * ( Global.iWindowWidth - width ) + Coordinates.x * heightratio, 0.5f * ( Global.iWindowHeight - height ) + Coordinates.w * heightratio );
-    glMultiTexCoord2f( m_textureunit, 1.f, 1.f ); glVertex2f( 0.5f * ( Global.iWindowWidth - width ) + Coordinates.z * heightratio, 0.5f * ( Global.iWindowHeight - height ) + Coordinates.y * heightratio );
-    glMultiTexCoord2f( m_textureunit, 1.f, 0.f ); glVertex2f( 0.5f * ( Global.iWindowWidth - width ) + Coordinates.z * heightratio, 0.5f * ( Global.iWindowHeight - height ) + Coordinates.w * heightratio );
-
-    glEnd();
+    // Get the scaling factor based on the image aspect ratio vs. the display aspect ratio.
+    float scale_factor = (tex.width() / tex.height()) > (display_size.x / display_size.y)
+        ? display_size.y / tex.height()
+        : display_size.x / tex.width();
+    
+    // Resize the image to fill the display. This will zoom in on the image on ultrawide monitors.
+    image_size = ImVec2((int)(tex.width() * scale_factor), (int)(tex.height() * scale_factor));
+    // Center the image on the display.
+    start_position = ImVec2((display_size.x - image_size.x) / 2, (display_size.y - image_size.y) / 2);
+    end_position = ImVec2(image_size.x + start_position.x, image_size.y + start_position.y);
+    // The image is flipped upside-down, we'll use the UV parameters to draw it from bottom up to un-flip it.
+    ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)tex.id, start_position, end_position, ImVec2(0, 1), ImVec2(1, 0));
 }

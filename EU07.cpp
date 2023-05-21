@@ -22,26 +22,35 @@ Stele, firleju, szociu, hunter, ZiomalCl, OLI_EU and others
 #include "Logs.h"
 #include <cstdlib>
 
-#ifdef _MSC_VER 
-#pragma comment(linker, "/subsystem:windows /ENTRY:mainCRTStartup") 
-#endif 
+#ifdef _MSC_VER
+#pragma comment(linker, "/subsystem:windows /ENTRY:mainCRTStartup")
+#endif
 
+void export_e3d_standalone(std::string in, std::string out, int flags, bool dynamic);
 
-int main( int argc, char *argv[] )
+int main(int argc, char *argv[])
 {
-    try
-	{
-        auto result { Application.init( argc, argv ) };
-        if( result == 0 ) {
-            result = Application.run();
-	    Application.exit();
+    // quick short-circuit for standalone e3d export
+    if (argc == 6 && std::string(argv[1]) == "-e3d") {
+        std::string in(argv[2]);
+        std::string out(argv[3]);
+        int flags = std::stoi(std::string(argv[4]));
+        int dynamic = std::stoi(std::string(argv[5]));
+        export_e3d_standalone(in, out, flags, dynamic);
+    } else {
+        try {
+            auto result { Application.init( argc, argv ) };
+            if( result == 0 ) {
+                result = Application.run();
+                Application.exit();
+            }
+        } catch( std::bad_alloc const &Error ) {
+            ErrorLog( "Critical error, memory allocation failure: " + std::string( Error.what() ) );
         }
+    }
+#ifndef _WIN32
+    fflush(stdout);
+    fflush(stderr);
+#endif
 	std::_Exit(0); // skip destructors, there are ordering errors which causes segfaults
-        return result;
-    }
-    catch( std::bad_alloc const &Error )
-	{
-        ErrorLog( "Critical error, memory allocation failure: " + std::string( Error.what() ) );
-        return -1;
-    }
 }

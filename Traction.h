@@ -18,9 +18,10 @@ http://mozilla.org/MPL/2.0/.
 
 class TTractionPowerSource;
 
-class TTraction : public scene::basic_node {
-
+class TTraction : public scene::basic_node
+{
     friend opengl_renderer;
+    friend opengl33_renderer;
 
   public: // na razie
     TTractionPowerSource *psPower[ 2 ] { nullptr, nullptr }; // najbliższe zasilacze z obu kierunków

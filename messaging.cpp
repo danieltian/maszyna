@@ -68,7 +68,8 @@ OnCommandGet(multiplayer::DaneRozkaz *pRozkaz)
                      || ( typeid( *event ) == typeid( lights_event ) )
                      || ( event->m_sibling != 0 ) ) {
                         // tylko jawne albo niejawne Multiple
-                        simulation::Events.AddToQuery( event, nullptr ); // drugi parametr to dynamic wywołujący - tu brak
+						command_relay relay;
+						relay.post(user_command::queueevent, 0.0, 0.0, GLFW_PRESS, 0, glm::vec3(0.0f), &event->name());
                     }
                 }
             }
@@ -113,7 +114,7 @@ OnCommandGet(multiplayer::DaneRozkaz *pRozkaz)
             if (*pRozkaz->iPar == 0) // sprawdzenie czasu
                 if (*pRozkaz->iPar & 1) // ustawienie czasu
                 {
-                    double t = pRozkaz->fPar[1];
+                    auto t = pRozkaz->fPar[1];
                     simulation::Time.data().wDay = std::floor(t); // niby nie powinno być dnia, ale...
                     if (Global.fMoveLight >= 0)
                         Global.fMoveLight = t; // trzeba by deklinację Słońca przeliczyć
@@ -139,7 +140,7 @@ OnCommandGet(multiplayer::DaneRozkaz *pRozkaz)
                     // jeśli długość nazwy jest niezerowa szukamy pierwszego pojazdu o takiej nazwie i odsyłamy parametry ramką #7
                     auto *vehicle = (
                         pRozkaz->cString[ 1 ] == '*' ?
-                            simulation::Vehicles.find( Global.asHumanCtrlVehicle ) :
+					        simulation::Train->Dynamic() :
                             simulation::Vehicles.find( std::string{ pRozkaz->cString + 1, (unsigned)pRozkaz->cString[ 0 ] } ) );
                     if( vehicle != nullptr ) {
                         WyslijNamiary( vehicle ); // wysłanie informacji o pojeździe
@@ -180,7 +181,7 @@ OnCommandGet(multiplayer::DaneRozkaz *pRozkaz)
             { // szukamy pierwszego pojazdu o takiej nazwie i odsyłamy parametry ramką #13
                 auto *lookup = (
                     pRozkaz->cString[ 2 ] == '*' ?
-                        simulation::Vehicles.find( Global.asHumanCtrlVehicle ) : // nazwa pojazdu użytkownika
+				        simulation::Train->Dynamic() : // nazwa pojazdu użytkownika
                         simulation::Vehicles.find( std::string( pRozkaz->cString + 2, (unsigned)pRozkaz->cString[ 1 ] ) ) ); // nazwa pojazdu
                 if( lookup == nullptr ) { break; } // nothing found, nothing to do
                 auto *d { lookup };
@@ -334,7 +335,7 @@ WyslijNamiary(TDynamicObject const *Vehicle)
             Vehicle->MoverParameters->ShowCurrent(p + 1); // amperomierze kolejnych grup
     // WriteLog("zapisalem prady");
     r.iPar[30] = Vehicle->MoverParameters->WarningSignal; // trabienie
-    r.fPar[31] = Vehicle->MoverParameters->RunningTraction.TractionVoltage; // napiecie WN
+    r.fPar[31] = Vehicle->MoverParameters->PantographVoltage; // napiecie WN
     // WriteLog("Parametry gotowe");
     i <<= 2; // ilość bajtów
     r.cString[i] = char(j); // na końcu nazwa, żeby jakoś zidentyfikować
@@ -370,7 +371,7 @@ WyslijObsadzone()
             r.fPar[ 16 * i + 5 ] = vehicle->GetPosition().y;
             r.fPar[ 16 * i + 6 ] = vehicle->GetPosition().z;
             r.iPar[ 16 * i + 7 ] = static_cast<int>( vehicle->Mechanik->action() );
-            strcpy( r.cString + 64 * i + 32, vehicle->GetTrack()->IsolatedName().c_str() );
+            strcpy( r.cString + 64 * i + 32, vehicle->GetTrack()->RemoteIsolatedName().c_str() );
             strcpy( r.cString + 64 * i + 48, vehicle->Mechanik->TrainName().c_str() );
             i++;
             if( i > 30 ) break;

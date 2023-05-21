@@ -27,10 +27,13 @@ Copyright (C) 2007-2014 Maciej Cierniak
 #include "Globals.h"
 #include "parser.h"
 
+#include "Logs.h"
+
 bool DebugModeFlag = false;
 bool FreeFlyModeFlag = false;
 bool EditorModeFlag = false;
 bool DebugCameraFlag = false;
+bool DebugTractionFlag = false;
 
 double Max0R(double x1, double x2)
 {
@@ -105,8 +108,14 @@ bool ClearFlag( int &Flag, int const Value ) {
 
 double Random(double a, double b)
 {
-    std::uniform_real_distribution<> dis(a, b);
-    return dis(Global.random_engine);
+	uint32_t val = Global.random_engine();
+	return interpolate(a, b, (double)val / Global.random_engine.max());
+}
+
+double LocalRandom(double a, double b)
+{
+	uint32_t val = Global.local_random_engine();
+	return interpolate(a, b, (double)val / Global.random_engine.max());
 }
 
 bool FuzzyLogic(double Test, double Threshold, double Probability)
@@ -186,6 +195,19 @@ std::vector<std::string> Split(const std::string &s)
 	return elems;
 }
 
+std::pair<std::string, int>
+split_string_and_number( std::string const &Key ) {
+
+    auto const indexstart{ Key.find_first_of( "-1234567890" ) };
+    auto const indexend{ Key.find_first_not_of( "-1234567890", indexstart ) };
+    if( indexstart != std::string::npos ) {
+        return {
+            Key.substr( 0, indexstart ),
+            std::stoi( Key.substr( indexstart, indexend - indexstart ) ) };
+    }
+    return { Key, 0 };
+}
+
 std::string to_string(int Value)
 {
 	std::ostringstream o;
@@ -207,10 +229,10 @@ std::string to_string(double Value)
 	return o.str();
 };
 
-std::string to_string(int Value, int precision)
+std::string to_string(int Value, int width)
 {
 	std::ostringstream o;
-	o << std::fixed << std::setprecision(precision);
+	o.width(width);
 	o << Value;
 	return o.str();
 };
@@ -218,15 +240,6 @@ std::string to_string(int Value, int precision)
 std::string to_string(double Value, int precision)
 {
 	std::ostringstream o;
-	o << std::fixed << std::setprecision(precision);
-	o << Value;
-	return o.str();
-};
-
-std::string to_string(int Value, int precision, int width)
-{
-	std::ostringstream o;
-	o.width(width);
 	o << std::fixed << std::setprecision(precision);
 	o << Value;
 	return o.str();
@@ -245,6 +258,22 @@ std::string to_hex_str( int const Value, int const Width )
 	converter << "0x" << std::uppercase << std::setfill( '0' ) << std::setw( Width ) << std::hex << Value;
 	return converter.str();
 };
+
+bool string_ends_with(const std::string &string, const std::string &ending)
+{
+	if (string.length() < ending.length())
+		return false;
+
+	return string.compare(string.length() - ending.length(), ending.length(), ending) == 0;
+}
+
+bool string_starts_with(const std::string &string, const std::string &begin)
+{
+	if (string.length() < begin.length())
+		return false;
+
+	return string.compare(0, begin.length(), begin) == 0;
+}
 
 std::string const fractionlabels[] = { " ", u8"¹", u8"²", u8"³", u8"⁴", u8"⁵", u8"⁶", u8"⁷", u8"⁸", u8"⁹" };
 
@@ -297,15 +326,31 @@ std::string ToUpper(std::string const &text) {
 void
 win1250_to_ascii( std::string &Input ) {
 
-    std::unordered_map<char, char> const charmap {
-        { 165, 'A' }, { 198, 'C' }, { 202, 'E' }, { 163, 'L' }, { 209, 'N' }, { 211, 'O' }, { 140, 'S' }, { 143, 'Z' }, { 175, 'Z' },
-        { 185, 'a' }, { 230, 'c' }, { 234, 'e' }, { 179, 'l' }, { 241, 'n' }, { 243, 'o' }, { 156, 's' }, { 159, 'z' }, { 191, 'z' }
+	std::unordered_map<char, char> const charmap {
+		{ 165, 'A' }, { 198, 'C' }, { 202, 'E' }, { 163, 'L' }, { 209, 'N' }, { 211, 'O' }, { 140, 'S' }, { 143, 'Z' }, { 175, 'Z' },
+		{ 185, 'a' }, { 230, 'c' }, { 234, 'e' }, { 179, 'l' }, { 241, 'n' }, { 243, 'o' }, { 156, 's' }, { 159, 'z' }, { 191, 'z' }
     };
     std::unordered_map<char, char>::const_iterator lookup;
     for( auto &input : Input ) {
         if( ( lookup = charmap.find( input ) ) != charmap.end() )
             input = lookup->second;
     }
+}
+
+std::string win1250_to_utf8(const std::string &Input) {
+	std::unordered_map<char, std::string> const charmap {
+		{ 165, u8"Ą" }, { 198, u8"Ć" }, { 202, u8"Ę" }, { 163, u8"Ł" }, { 209, u8"Ń" }, { 211, u8"Ó" }, { 140, u8"Ś" }, { 143, u8"Ź" }, { 175, u8"Ż" },
+		{ 185, u8"ą" }, { 230, u8"ć" }, { 234, u8"ę" }, { 179, u8"ł" }, { 241, u8"ń" }, { 243, u8"ó" }, { 156, u8"ś" }, { 159, u8"ź" }, { 191, u8"ż" }
+	};
+	std::string output;
+	std::unordered_map<char, std::string>::const_iterator lookup;
+	for( auto &input : Input ) {
+		if( ( lookup = charmap.find( input ) ) != charmap.end() )
+			output += lookup->second;
+		else
+			output += input;
+	}
+	return output;
 }
 
 // Ra: tymczasowe rozwiązanie kwestii zagranicznych (czeskich) napisów
@@ -414,9 +459,9 @@ erase_leading_slashes( std::string &Filename ) {
 void
 replace_slashes( std::string &Filename ) {
 
-    std::replace(
-        std::begin( Filename ), std::end( Filename ),
-        '\\', '/' );
+	std::replace(
+	    std::begin( Filename ), std::end( Filename ),
+	    '\\', '/' );
 }
 
 // returns potential path part from provided file name
@@ -439,6 +484,35 @@ len_common_prefix( std::string const &Left, std::string const &Right ) {
     return ( Right.size() <= Left.size() ?
         std::distance( right, std::mismatch( right, right + Right.size(), left ).first ) :
         std::distance( left,  std::mismatch( left,  left + Left.size(),  right ).first ) );
+}
+
+// returns true if provided string ends with another provided string
+bool
+ends_with( std::string_view String, std::string_view Suffix ) {
+
+    return ( String.size() >= Suffix.size() )
+        && ( 0 == String.compare( String.size() - Suffix.size(), Suffix.size(), Suffix ) );
+}
+
+// returns true if provided string begins with another provided string
+bool
+starts_with( std::string_view const String, std::string_view Prefix ) {
+
+    return ( String.size() >= Prefix.size() )
+        && ( 0 == String.compare( 0, Prefix.size(), Prefix ) );
+}
+
+// returns true if provided string contains another provided string
+bool
+contains( std::string_view const String, std::string_view Substring ) {
+
+    return ( String.find( Substring ) != std::string::npos );
+}
+
+bool
+contains( std::string_view const String, char Character ) {
+
+    return ( String.find( Character ) != std::string::npos );
 }
 
 // helper, restores content of a 3d vector from provided input stream
@@ -480,4 +554,14 @@ deserialize_random_set( cParser &Input, char const *Break ) {
         // shouldn't ever get here but, eh
         return "";
     }
+}
+
+int count_trailing_zeros( uint32_t val )
+{
+    int r = 0;
+
+    for( uint32_t shift = 1; !( val & shift ); shift <<= 1 )
+        r++;
+
+    return r;
 }

@@ -1,4 +1,4 @@
-﻿/*
+/*
 This Source Code Form is subject to the
 terms of the Mozilla Public License, v.
 2.0. If a copy of the MPL was not
@@ -8,6 +8,8 @@ http://mozilla.org/MPL/2.0/.
 */
 
 #pragma once
+
+#include "Globals.h"
 
 // encapsulation of the fixed pipeline opengl color
 class opengl_color {
@@ -32,7 +34,7 @@ public:
     inline
     void
         color4( glm::vec4 const &Color ) {
-            if( ( Color != m_color ) ) {
+            if( ( Color != m_color ) || ( false == Global.bUseVBO ) ) {
                 m_color = Color;
                 ::glColor4fv( glm::value_ptr( m_color ) ); } }
     inline
@@ -61,9 +63,15 @@ private:
 extern opengl_color OpenGLColor;
 
 // NOTE: standard opengl calls re-definitions
+#undef glColor3f
+#undef glColor3fv
+#undef glColor4f
+#undef glColor4fv
+
 #define glColor3f OpenGLColor.color3
 #define glColor3fv OpenGLColor.color3
 #define glColor4f OpenGLColor.color4
 #define glColor4fv OpenGLColor.color4
 
 //---------------------------------------------------------------------------
+

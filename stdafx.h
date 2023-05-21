@@ -19,12 +19,6 @@
 #define _CRTDBG_MAP_ALLOC
 #include <stdlib.h>
 #include <crtdbg.h>
-#ifdef _DEBUG
-#ifndef DBG_NEW
-#define DBG_NEW new ( _NORMAL_BLOCK , __FILE__ , __LINE__ )
-#define new DBG_NEW
-#endif
-#endif  // _DEBUG
 #endif
 // operating system
 #ifdef _WIN32
@@ -67,6 +61,7 @@
 #include <random>
 #include <algorithm>
 #include <functional>
+#include <numeric>
 #include <regex>
 #include <limits>
 #include <memory>
@@ -75,29 +70,35 @@
 #include <mutex>
 #include <condition_variable>
 #include <typeinfo>
+#include <bitset>
+#include <chrono>
+#include <optional>
+#include <filesystem>
+#include <variant>
 
-#include <GL/glew.h>
-#ifdef _WIN32
-#include <GL/wglew.h>
-#endif
+#include "glad/glad.h"
 
-#define GLFW_INCLUDE_GLU
+#define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
 #ifndef GLFW_TRUE
 #define GLFW_FALSE 0
 #define GLFW_TRUE 1
 #define glfwGetKeyName(a, b) ("")
+#define glfwFocusWindow(w)
 #endif
 
 #define GLM_ENABLE_EXPERIMENTAL
 #define GLM_FORCE_CTOR_INIT
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/matrix_transform_2d.hpp>
 #include <glm/gtc/matrix_access.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/epsilon.hpp>
+#include <glm/gtc/packing.hpp>
 #include <glm/gtx/rotate_vector.hpp>
+#include <glm/gtx/euler_angles.hpp>
 #include <glm/gtx/norm.hpp>
 #include <glm/gtx/string_cast.hpp>
 
@@ -106,16 +107,11 @@ int const null_handle = 0;
 #include "openglmatrixstack.h"
 #define STRINGIZE_DETAIL(x) #x
 #define STRINGIZE(x) STRINGIZE_DETAIL(x)
-#define glDebug(x) if (GLEW_GREMEDY_string_marker) glStringMarkerGREMEDY(0, __FILE__ ":" STRINGIZE(__LINE__) ": " x);
-#include "openglcolor.h"
+#define glDebug(x) if (GLAD_GL_GREMEDY_string_marker) glStringMarkerGREMEDY(0, __FILE__ ":" STRINGIZE(__LINE__) ": " x);
 
-#ifdef DBG_NEW
-#pragma push_macro("new")
-#undef new
 #include "imgui/imgui.h"
-#pragma pop_macro("new")
-#else
-#include "imgui/imgui.h"
-#endif
+#define ImVec2S(a, b) ImVec2(a * Global.ui_scale, b * Global.ui_scale)
+
+#include "crashreporter.h"
 
 #endif

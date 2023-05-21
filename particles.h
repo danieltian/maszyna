@@ -156,7 +156,7 @@ private:
     // current state
     float m_spawncount { 0.f }; // number of particles to spawn during next update
     particle_sequence m_particles; // collection of spawned particles
-	size_t m_max_particles; // maximum number of particles existing
+    std::size_t m_max_particles; // maximum number of particles existing
     scene::bounding_area m_area; // bounding sphere of owned particles
 };
 

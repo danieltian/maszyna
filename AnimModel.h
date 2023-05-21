@@ -45,7 +45,7 @@ class TAnimVocaloidFrame
 
 class basic_event;
 
-class TAnimContainer
+class TAnimContainer : std::enable_shared_from_this<TAnimContainer>
 { // opakowanie submodelu, określające animację egzemplarza - obsługiwane jako lista
     friend TAnimModel;
 
@@ -62,24 +62,17 @@ class TAnimContainer
     float fAngleCurrent; // parametr interpolacyjny: 0=start, 1=docelowy
     float fAngleSpeed; // zmiana parametru interpolacji w sekundach
     TSubModel *pSubModel;
-    float4x4 *mAnim; // macierz do animacji kwaternionowych
+	std::shared_ptr<float4x4> mAnim; // macierz do animacji kwaternionowych
     // dla kinematyki odwróconej używane są kwaterniony
     float fLength; // długość kości dla IK
     int iAnim; // animacja: +1-obrót Eulera, +2-przesuw, +4-obrót kwaternionem, +8-IK
     //+0x80000000: animacja z eventem, wykonywana poza wyświetlaniem
     //+0x100: pierwszy stopień IK - obrócić w stronę pierwszego potomnego (dziecka)
     //+0x200: drugi stopień IK - dostosować do pozycji potomnego potomnego (wnuka)
-    union
-    { // mogą być animacje klatkowe różnego typu, wskaźniki używa AnimModel
-        TAnimVocaloidFrame *pMovementData; // wskaźnik do klatki
-    };
     basic_event *evDone; // ewent wykonywany po zakończeniu animacji, np. zapór, obrotnicy
   public:
-    TAnimContainer *pNext;
-    TAnimContainer *acAnimNext; // lista animacji z eventem, które muszą być przeliczane również bez
     // wyświetlania
-    TAnimContainer();
-    ~TAnimContainer();
+	TAnimContainer();
     bool Init(TSubModel *pNewSubModel);
     inline
     std::string NameGet() {
@@ -107,39 +100,25 @@ class TAnimContainer
         return evDone; };
 };
 
-class TAnimAdvanced
-{ // obiekt zaawansowanej animacji submodelu
-  public:
-    TAnimVocaloidFrame *pMovementData;
-    unsigned char *pVocaloidMotionData; // plik animacyjny dla egzemplarza (z eventu)
-    double fFrequency; // przeliczenie czasu rzeczywistego na klatki animacji
-    double fCurrent; // klatka animacji wyświetlona w poprzedniej klatce renderingu
-    double fLast; // klatka kończąca animację
-    int iMovements;
-    TAnimAdvanced();
-    ~TAnimAdvanced();
-    int SortByBone();
-};
-
 // opakowanie modelu, określające stan egzemplarza
 class TAnimModel : public scene::basic_node {
 
     friend opengl_renderer;
+    friend opengl33_renderer;
     friend itemproperties_panel;
 
 public:
 // constructors
     explicit TAnimModel( scene::node_data const &Nodedata );
-// destructor
-    ~TAnimModel();
 // methods
     static void AnimUpdate( double dt );
     bool Init(std::string const &asName, std::string const &asReplacableTexture);
     bool Load(cParser *parser, bool ter = false);
-    TAnimContainer * AddContainer(std::string const &Name);
-    TAnimContainer * GetContainer(std::string const &Name = "");
-    void LightSet( int const n, float const v );
-    void AnimationVND( void *pData, double a, double b, double c, double d );
+	std::shared_ptr<TAnimContainer> AddContainer(std::string const &Name);
+	std::shared_ptr<TAnimContainer> GetContainer(std::string const &Name = "");
+	void LightSet( int const n, float const v );
+    void SkinSet( int const Index, material_handle const Material );
+	std::optional<std::tuple<float, float, std::optional<glm::vec3> > > LightGet( int const n );
     int TerrainCount();
     TSubModel * TerrainSquare(int n);
     int Flags();
@@ -160,13 +139,16 @@ public:
         Angles() const {
             return vAngle; }
 // members
-    static TAnimContainer *acAnimList; // lista animacji z eventem, które muszą być przeliczane również bez wyświetlania
+	std::list<std::shared_ptr<TAnimContainer>> m_animlist;
+
+	// lista animacji z eventem, które muszą być przeliczane również bez wyświetlania
+	static std::list<std::weak_ptr<TAnimContainer>> acAnimList;
 
 private:
 // methods
     void RaPrepare(); // ustawienie animacji egzemplarza na wzorcu
     void RaAnimate( unsigned int const Framestamp ); // przeliczenie animacji egzemplarza
-    void Advanced();
+
     // radius() subclass details, calculates node's bounding radius
     float radius_();
     // serialize() subclass details, sends content of the subclass to provided stream
@@ -175,15 +157,16 @@ private:
     void deserialize_( std::istream &Input );
     // export() subclass details, sends basic content of the class in legacy (text) format to provided stream
     void export_as_text_( std::ostream &Output ) const;
+    // checks whether provided token is a legacy (text) format keyword
+    bool is_keyword( std::string const &Token ) const;
 
 // members
-    TAnimContainer *pRoot { nullptr }; // pojemniki sterujące, tylko dla aniomowanych submodeli
+	std::shared_ptr<TAnimContainer> pRoot; // pojemniki sterujące, tylko dla aniomowanych submodeli
     TModel3d *pModel { nullptr };
     glm::vec3 vAngle; // bazowe obroty egzemplarza względem osi
     material_data m_materialdata;
 
     std::string asText; // tekst dla wyświetlacza znakowego
-    TAnimAdvanced *pAdvanced { nullptr };
     // TODO: wrap into a light state struct, remove fixed element count
     int iNumLights { 0 };
     std::array<TSubModel *, iMaxNumLights> LightsOn {}; // Ra: te wskaźniki powinny być w ramach TModel3d
@@ -194,7 +177,8 @@ private:
     std::array<float, iMaxNumLights> m_lightopacities; // {1} in constructor
     float fOnTime { 1.f / 2 };// { 60.f / 45.f / 2 };
     float fOffTime { 1.f / 2 };// { 60.f / 45.f / 2 }; // były stałymi, teraz mogą być zmienne dla każdego egzemplarza
-    float fTransitionTime { fOnTime * 0.9f }; // time
+//    float fTransitionTime { fOnTime * 0.9f }; // time
+    bool m_transition { true }; // smooth transition between light states
     unsigned int m_framestamp { 0 }; // id of last rendered gfx frame
 };
 

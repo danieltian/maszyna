@@ -10,6 +10,7 @@ http://mozilla.org/MPL/2.0/.
 #pragma once
 
 #include "scenenode.h"
+#include "widgets/map_objects.h"
 
 namespace scene {
 
@@ -33,6 +34,9 @@ public:
     // indicates creation of current group ended. returns: handle to the parent group or null_handle if group stack is empty
     group_handle
         close();
+	// update minimap objects
+	void
+	    update_map();
     // returns current active group, or null_handle if group stack is empty
     group_handle
         handle() const;
@@ -48,7 +52,7 @@ public:
             return m_groupmap[ Group ]; }
     // sends basic content of the class in legacy (text) format to provided stream
     void
-        export_as_text( std::ostream &Output ) const;
+        export_as_text( std::ostream &Output, bool const Dirty ) const;
 
 private:
 // types
@@ -60,6 +64,8 @@ private:
     // creates handle for a new group
     group_handle
         create_handle();
+    bool
+        assign_cross_switch(map::track_switch&sw, std::string &sw_name, const std::string &id, size_t idx);
 // members
     group_map m_groupmap; // map of established node groups
     std::stack<scene::group_handle> m_activegroup; // helper, group to be assigned to newly created nodes

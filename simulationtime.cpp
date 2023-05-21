@@ -20,7 +20,7 @@ scenario_time Time;
 } // simulation
 
 void
-scenario_time::init() {
+scenario_time::init(std::time_t timestamp) {
     char monthdaycounts[ 2 ][ 13 ] = {
         { 0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 },
         { 0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 } };
@@ -32,27 +32,15 @@ scenario_time::init() {
     auto const requestedminute { requestedtime % 60 };
     // cache requested elements, if any
 
-#ifdef __linux__
-	timespec ts;
-	clock_gettime(CLOCK_REALTIME, &ts);
-	tm *tms = localtime(&ts.tv_sec);
-	m_time.wYear = tms->tm_year;
-	m_time.wMonth = tms->tm_mon;
+	std::tm *tms = std::gmtime(&timestamp);
+	m_time.wYear = tms->tm_year + 1900;
+	m_time.wMonth = tms->tm_mon + 1;
 	m_time.wDayOfWeek = tms->tm_wday;
 	m_time.wDay = tms->tm_mday;
 	m_time.wHour = tms->tm_hour;
 	m_time.wMinute = tms->tm_min;
 	m_time.wSecond = tms->tm_sec;
-	m_time.wMilliseconds = ts.tv_nsec / 1000000;
-
-/*
-    time_t local = mktime(localtime(&ts.tv_sec));
-    time_t utc = mktime(gmtime(&ts.tv_sec));
-    m_timezonebias = (double)(local - utc) / 3600.0f;
-*/
-#elif _WIN32
-    ::GetLocalTime( &m_time );
-#endif
+	m_time.wMilliseconds = 0;
 
     if( Global.fMoveLight > 0.0 ) {
         // day and month of the year can be overriden by scenario setup
@@ -65,7 +53,7 @@ scenario_time::init() {
     if( ( requestedhour != -1 )
      || ( requestedminute != 1 ) ) {
         m_time.wSecond = 0;
-    }
+	}
 
     m_yearday = year_day( m_time.wDay, m_time.wMonth, m_time.wYear );
 
@@ -94,7 +82,7 @@ scenario_time::init() {
         zonebias += timezoneinfo.StandardBias;
     }
 
-    m_timezonebias = ( zonebias / 60.0 );
+	m_timezonebias = ( zonebias / 60.0 );
 }
 
 void
@@ -197,6 +185,13 @@ scenario_time::julian_day() const {
     return JD;
 }
 
+void scenario_time::set_time(int yearday, int minute) {
+	m_yearday = yearday;
+	daymonth(m_time.wDay, m_time.wMonth, m_time.wYear, m_yearday);
+	m_time.wHour = minute / 60;
+	m_time.wMinute = minute % 60;
+}
+
 // calculates day of week for provided date
 int
 scenario_time::day_of_week( int const Day, int const Month, int const Year ) const {
@@ -258,5 +253,13 @@ scenario_time::is_leap( int const Year ) const {
 
     return ( ( Year % 4 == 0 ) && ( ( Year % 100 != 0 ) || ( Year % 400 == 0 ) ) );
 
+}
+
+std::string
+scenario_time::to_string() {
+    char time[9];
+    snprintf(time, sizeof(time), "%02d:%02d:%02d", m_time.wHour, m_time.wMinute, m_time.wSecond);
+
+    return std::string(time);
 }
 //---------------------------------------------------------------------------

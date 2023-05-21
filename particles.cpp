@@ -14,6 +14,7 @@ http://mozilla.org/MPL/2.0/.
 #include "Globals.h"
 #include "AnimModel.h"
 #include "simulationenvironment.h"
+#include "Logs.h"
 
 
 void
@@ -57,20 +58,20 @@ smoke_source::particle_emitter::deserialize( cParser &Input ) {
 void
 smoke_source::particle_emitter::initialize( smoke_particle &Particle ) {
 
-    auto const polarangle { glm::radians( Random( inclination[ value_limit::min ], inclination[ value_limit::max ] ) ) }; // theta
-    auto const azimuthalangle { glm::radians( Random( -180, 180 ) ) }; // phi
+    auto const polarangle { glm::radians( LocalRandom( inclination[ value_limit::min ], inclination[ value_limit::max ] ) ) }; // theta
+    auto const azimuthalangle { glm::radians( LocalRandom( -180, 180 ) ) }; // phi
     // convert spherical coordinates to opengl coordinates
     auto const launchvector { glm::vec3(
         std::sin( polarangle ) * std::sin( azimuthalangle ) * -1,
         std::cos( polarangle ),
         std::sin( polarangle ) * std::cos( azimuthalangle ) ) };
-        auto const launchvelocity { static_cast<float>( Random( velocity[ value_limit::min ], velocity[ value_limit::max ] ) ) };
+        auto const launchvelocity { static_cast<float>( LocalRandom( velocity[ value_limit::min ], velocity[ value_limit::max ] ) ) };
     
     Particle.velocity = launchvector * launchvelocity;
 
-    Particle.rotation = glm::radians( Random( 0, 360 ) );
-    Particle.size = Random( size[ value_limit::min ], size[ value_limit::max ] );
-    Particle.opacity = Random( opacity[ value_limit::min ], opacity[ value_limit::max ] ) / Global.SmokeFidelity;
+    Particle.rotation = glm::radians( LocalRandom( 0, 360 ) );
+    Particle.size = LocalRandom( size[ value_limit::min ], size[ value_limit::max ] );
+    Particle.opacity = LocalRandom( opacity[ value_limit::min ], opacity[ value_limit::max ] ) / Global.SmokeFidelity;
     Particle.age = 0;
 }
 
@@ -167,10 +168,16 @@ smoke_source::update( double const Timedelta, bool const Onlydespawn ) {
             std::min<float>(
                 m_spawncount + ( m_spawnrate * Timedelta * Global.SmokeFidelity ),
                 m_max_particles ) );
-    // HACK: don't spawn particles in tunnels, to prevent smoke clipping through 'terrain' outside
-    if( ( m_ownertype == owner_type::vehicle )
-     && ( m_owner.vehicle->RaTrackGet()->eEnvironment == e_tunnel ) ) {
+    // consider special spawn rate cases
+    if( m_ownertype == owner_type::vehicle ) {
+        // HACK: don't spawn particles in tunnels, to prevent smoke clipping through 'terrain' outside
+        if( m_owner.vehicle->RaTrackGet()->eEnvironment == e_tunnel ) {
             m_spawncount = 0.f;
+        }
+        if( false == m_owner.vehicle->bEnabled ) {
+            // don't spawn particles for vehicles which left the scenario
+            m_spawncount = 0.f;
+        }
     }
     // update spawned particles
     for( auto particleiterator { std::begin( m_particles ) }; particleiterator != std::end( m_particles ); ++particleiterator ) {
@@ -268,9 +275,10 @@ smoke_source::location() const {
             break;
         }
         case owner_type::node: {
-            // TODO: take into account node rotation
-            auto const rotation { glm::angleAxis( glm::radians( m_owner.node->Angles().y ), glm::vec3{ 0.f, 1.f, 0.f } ) };
-            location = rotation * glm::vec3{ m_offset };
+            auto const rotationx { glm::angleAxis( glm::radians( m_owner.node->Angles().x ), glm::vec3{ 1.f, 0.f, 0.f } ) };
+            auto const rotationy { glm::angleAxis( glm::radians( m_owner.node->Angles().y ), glm::vec3{ 0.f, 1.f, 0.f } ) };
+            auto const rotationz { glm::angleAxis( glm::radians( m_owner.node->Angles().z ), glm::vec3{ 0.f, 0.f, 1.f } ) };
+            location = rotationy * rotationx * rotationz * glm::vec3{ m_offset };
             location += m_owner.node->location();
             break;
         }
@@ -293,7 +301,7 @@ smoke_source::initialize( smoke_particle &Particle ) {
 
     if( m_ownertype == owner_type::vehicle ) {
         Particle.opacity *= m_owner.vehicle->MoverParameters->dizel_fill;
-        auto const enginerevolutionsfactor { 1.5f }; // high engine revolutions increase initial particle velocity
+        auto const enginerevolutionsfactor { 0.5f }; // high engine revolutions increase initial particle velocity
         switch( m_owner.vehicle->MoverParameters->EngineType ) {
             case TEngineType::DieselElectric: {
                 Particle.velocity *= 1.0 + enginerevolutionsfactor * m_owner.vehicle->MoverParameters->enrot / ( m_owner.vehicle->MoverParameters->DElist[ m_owner.vehicle->MoverParameters->MainCtrlPosNo ].RPM / 60.0 );
@@ -323,7 +331,7 @@ smoke_source::update( smoke_particle &Particle, bounding_box &Boundingbox, doubl
     // crude smoke dispersion simulation
     // http://www.auburn.edu/academic/forestry_wildlife/fire/smoke_guide/smoke_dispersion.htm
     Particle.velocity.y += ( 0.005 * Particle.velocity.y ) * std::min( 0.f, Global.AirTemperature - 10 ) * Timedelta; // decelerate faster in cold weather
-    Particle.velocity.y -= ( 0.010 * Particle.velocity.y ) * Global.Overcast * Timedelta; // decelerate faster with high air humidity and/or precipitation
+    Particle.velocity.y -= ( 0.050 * Particle.velocity.y ) * Global.Overcast * Timedelta; // decelerate faster with high air humidity and/or precipitation
     Particle.velocity.y = std::max<float>( 0.25 * ( 2.f - Global.Overcast ), Particle.velocity.y ); // put a cap on deceleration
 
     Particle.position += Particle.velocity * static_cast<float>( Timedelta );
@@ -415,14 +423,17 @@ particle_manager::find( std::string const &Template ) {
     }
     // ... and if it fails try to add the template to the database from a data file
     smoke_source source;
-	cParser parser( templatepath + templatename + ".txt", cParser::buffer_FILE );
-    if( source.deserialize( parser ) ) {
+    cParser sound_parser( templatepath + templatename + ".txt", cParser::buffer_FILE );
+    if( source.deserialize( sound_parser ) ) {
         // if deserialization didn't fail finish source setup...
         source.m_opacitymodifier.bind( &Global.SmokeFidelity );
         // ...then cache the source as template for future instances
         m_sourcetemplates.emplace( templatename, source );
         // should be 'safe enough' to return lookup result directly afterwards
         return &( m_sourcetemplates.find( templatename )->second );
+    }
+    else {
+        ErrorLog( "Bad file: failed to locate particle source configuration file \"" + std::string( templatepath + templatename + ".txt" ) + "\"", logtype::file );
     }
     // if fetching data from the file fails too, give up
     return nullptr;

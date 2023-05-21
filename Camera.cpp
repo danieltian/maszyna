@@ -14,6 +14,7 @@ http://mozilla.org/MPL/2.0/.
 #include "utilities.h"
 #include "Console.h"
 #include "Timer.h"
+#include "Driver.h"
 #include "DynObj.h"
 #include "MOVER.h"
 
@@ -147,7 +148,7 @@ void TCamera::Update()
     command_data command;
     // NOTE: currently we're only storing commands for local entity and there's no id system in place,
     // so we're supplying 'default' entity id of 0
-    while( simulation::Commands.pop( command, static_cast<std::size_t>( command_target::entity ) | 0 ) ) {
+	while( simulation::Commands.pop( command, static_cast<std::size_t>( command_target::entity ) | 0 ) ) {
 
         OnCommand( command );
     }
@@ -166,13 +167,9 @@ void TCamera::Update()
         Angle.y += 2 * M_PI;
     }
 
-    Angle.x -= m_rotationoffsets.x * rotationfactor;
+    // Limit the camera pitch to +/- 90°.
+    Angle.x = clamp(Angle.x - (m_rotationoffsets.x * rotationfactor), -M_PI_2, M_PI_2);
     m_rotationoffsets.x *= ( 1.0 - rotationfactor );
-
-    if( m_owner != nullptr ) {
-        // jeżeli jazda z pojazdem ograniczenie kąta spoglądania w dół i w górę
-        Angle.x = clamp( Angle.x, -M_PI_4, M_PI_4 );
-    }
 
     // update position
     if( ( m_owner == nullptr )
@@ -195,10 +192,22 @@ void TCamera::Update()
         // attached movement position update
         auto movement { Velocity * -2.0 };
         movement.y = -movement.y;
-        if( m_owner->MoverParameters->ActiveCab < 0 ) {
+        auto const *owner { (
+            m_owner->Mechanik ?
+                m_owner->Mechanik :
+                m_owner->ctOwner ) };
+        if( ( owner )
+         && ( owner->Occupied()->CabOccupied < 0 ) ) { 
             movement *= -1.f;
             movement.y = -movement.y;
         }
+/*
+        if( ( m_owner->ctOwner )
+         && ( m_owner->ctOwner->Vehicle()->DirectionGet() != m_owner->DirectionGet() ) ) {
+            movement *= -1.f;
+            movement.y = -movement.y;
+        }
+*/
         movement.RotateY( Angle.y );
 
         m_owneroffset += movement * deltatime;

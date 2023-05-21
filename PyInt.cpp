@@ -23,14 +23,33 @@ void render_task::run() {
 
     // convert provided input to a python dictionary
     auto *input = PyDict_New();
-	if( input == nullptr ) {
+    if (input == nullptr) {
 		cancel();
 		return;
 	}
-    for( auto const &datapair : m_input->floats )   { PyDict_SetItemString( input, datapair.first.c_str(), PyGetFloat( datapair.second ) ); }
-    for( auto const &datapair : m_input->integers ) { PyDict_SetItemString( input, datapair.first.c_str(), PyGetInt( datapair.second ) ); }
-    for( auto const &datapair : m_input->bools )    { PyDict_SetItemString( input, datapair.first.c_str(), PyGetBool( datapair.second ) ); }
-    for( auto const &datapair : m_input->strings )  { PyDict_SetItemString( input, datapair.first.c_str(), PyGetString( datapair.second.c_str() ) ); }
+    for( auto const &datapair : m_input->floats )   { auto *value{ PyGetFloat( datapair.second ) }; PyDict_SetItemString( input, datapair.first.c_str(), value ); Py_DECREF( value ); }
+    for( auto const &datapair : m_input->integers ) { auto *value{ PyGetInt( datapair.second ) }; PyDict_SetItemString( input, datapair.first.c_str(), value ); Py_DECREF( value ); }
+    for( auto const &datapair : m_input->bools )    { auto *value{ PyGetBool( datapair.second ) }; PyDict_SetItemString( input, datapair.first.c_str(), value ); }
+    for( auto const &datapair : m_input->strings )  { auto *value{ PyGetString( datapair.second.c_str() ) }; PyDict_SetItemString( input, datapair.first.c_str(), value ); Py_DECREF( value ); }
+    for (auto const &datapair : m_input->vec2_lists) {
+        PyObject *list = PyList_New(datapair.second.size());
+
+        for (size_t i = 0; i < datapair.second.size(); i++) {
+            auto const &vec = datapair.second[i];
+                        WriteLog("passing " + glm::to_string(vec));
+
+            PyObject *tuple = PyTuple_New(2);
+            PyTuple_SetItem(tuple, 0, PyGetFloat(vec.x)); // steals ref
+            PyTuple_SetItem(tuple, 1, PyGetFloat(vec.y)); // steals ref
+
+            PyList_SetItem(list, i, tuple); // steals ref
+        }
+
+        PyDict_SetItemString(input, datapair.first.c_str(), list);
+        Py_DECREF(list);
+    }
+	delete m_input;
+	m_input = nullptr;
 
     // call the renderer
     auto *output { PyObject_CallMethod( m_renderer, "render", "O", input ) };
@@ -41,32 +60,82 @@ void render_task::run() {
         auto *outputheight { PyObject_CallMethod( m_renderer, "get_height", nullptr ) };
         // upload texture data
         if( ( outputwidth != nullptr )
-         && ( outputheight != nullptr ) ) {
+         && ( outputheight != nullptr )
+		 && m_target) {
+			int width = PyInt_AsLong( outputwidth );
+			int height = PyInt_AsLong( outputheight );
+			int components, format;
 
-            ::glBindTexture( GL_TEXTURE_2D, m_target );
-            // setup texture parameters
-            ::glTexParameteri( GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE );
-            ::glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-            ::glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
-            if( GLEW_EXT_texture_filter_anisotropic ) {
-                // anisotropic filtering
-                ::glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, Global.AnisotropicFiltering );
-            }
-            // build texture
-            ::glTexImage2D(
-                GL_TEXTURE_2D, 0,
-                GL_RGB8,
-                PyInt_AsLong( outputwidth ), PyInt_AsLong( outputheight ), 0,
-                GL_RGB, GL_UNSIGNED_BYTE, reinterpret_cast<GLubyte const *>( PyString_AsString( output ) ) );
-            ::glFlush();
+            const unsigned char *image = reinterpret_cast<const unsigned char *>( PyString_AsString( output ) );
+
+			std::lock_guard<std::mutex> guard(m_target->mutex);
+			if (m_target->image)
+				delete[] m_target->image;
+
+			if (!Global.gfx_usegles)
+			{
+				int size = width * height * 3;
+				format = GL_SRGB8;
+				components = GL_RGB;
+				m_target->image = new unsigned char[size];
+				memcpy(m_target->image, image, size);
+			}
+			else
+			{
+				format = GL_SRGB8_ALPHA8;
+				components = GL_RGBA;
+				m_target->image = new unsigned char[width * height * 4];
+
+				int w = width;
+				int h = height;
+				for (int y = 0; y < h; y++)
+					for (int x = 0; x < w; x++)
+					{
+						m_target->image[(y * w + x) * 4 + 0] = image[(y * w + x) * 3 + 0];
+						m_target->image[(y * w + x) * 4 + 1] = image[(y * w + x) * 3 + 1];
+						m_target->image[(y * w + x) * 4 + 2] = image[(y * w + x) * 3 + 2];
+						m_target->image[(y * w + x) * 4 + 3] = 0xFF;
+					}
+			}
+
+			m_target->width = width;
+			m_target->height = height;
+			m_target->components = components;
+			m_target->format = format;
+			m_target->timestamp = std::chrono::high_resolution_clock::now();
         }
         if( outputheight != nullptr ) { Py_DECREF( outputheight ); }
         if( outputwidth  != nullptr ) { Py_DECREF( outputwidth ); }
         Py_DECREF( output );
     }
+}
 
-    // clean up after yourself
-	cancel();
+void render_task::upload()
+{
+	if (Global.python_uploadmain && m_target->image)
+	{
+		glBindTexture(GL_TEXTURE_2D, m_target->shared_tex);
+		glTexImage2D(
+		    GL_TEXTURE_2D, 0,
+		    m_target->format,
+		    m_target->width, m_target->height, 0,
+		    m_target->components, GL_UNSIGNED_BYTE, m_target->image);
+
+		if (Global.python_mipmaps)
+		{
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+			glGenerateMipmap(GL_TEXTURE_2D);
+		}
+		else
+		{
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		}
+
+		if (Global.python_threadedupload)
+			glFlush();
+	}
+
+	delete this;
 }
 
 void render_task::cancel() {
@@ -77,6 +146,9 @@ void render_task::cancel() {
 
 // initializes the module. returns true on success
 auto python_taskqueue::init() -> bool {
+
+	crashreport_add_info("python.threadedupload", Global.python_threadedupload ? "yes" : "no");
+	crashreport_add_info("python.uploadmain", Global.python_uploadmain ? "yes" : "no");
 
 #ifdef _WIN32
 	if (sizeof(void*) == 8)
@@ -94,7 +166,8 @@ auto python_taskqueue::init() -> bool {
 	else
 		Py_SetPythonHome("macpython");
 #endif
-    Py_Initialize();
+    Py_InitializeEx(0);
+
     PyEval_InitThreads();
 
 	PyObject *stringiomodule { nullptr };
@@ -127,18 +200,22 @@ auto python_taskqueue::init() -> bool {
     // release the lock, save the state for future use
     m_mainthread = PyEval_SaveThread();
 
-    WriteLog( "Python Interpreter setup complete" );
+    WriteLog( "Python Interpreter: setup complete" );
 
     // init workers
     for( auto &worker : m_workers ) {
 
-        auto *openglcontextwindow { Application.window( -1 ) };
+		GLFWwindow *openglcontextwindow = nullptr;
+		if (Global.python_threadedupload)
+			openglcontextwindow = Application.window( -1 );
         worker = std::thread(
                     &python_taskqueue::run, this,
-                    openglcontextwindow, std::ref( m_tasks ), std::ref( m_condition ), std::ref( m_exit ) );
+		            openglcontextwindow, std::ref( m_tasks ), std::ref(m_uploadtasks), std::ref( m_condition ), std::ref( m_exit ) );
 
         if( false == worker.joinable() ) { return false; }
     }
+
+    m_initialized = true;
 
     return true;
 
@@ -149,6 +226,9 @@ release_and_exit:
 
 // shuts down the module
 void python_taskqueue::exit() {
+    if (!m_initialized)
+        return;
+
     // let the workers know we're done with them
     m_exit = true;
     m_condition.notify_all();
@@ -170,7 +250,9 @@ void python_taskqueue::exit() {
 // adds specified task along with provided collection of data to the work queue. returns true on success
 auto python_taskqueue::insert( task_request const &Task ) -> bool {
 
-    if( ( Task.renderer.empty() )
+    if( !m_initialized
+     || ( false == Global.python_enabled )
+     || ( Task.renderer.empty() )
      || ( Task.input == nullptr )
      || ( Task.target == 0 ) ) { return false; }
 
@@ -283,9 +365,11 @@ cache_and_return:
     return renderer;
 }
 
-void python_taskqueue::run( GLFWwindow *Context, rendertask_sequence &Tasks, threading::condition_variable &Condition, std::atomic<bool> &Exit ) {
+void python_taskqueue::run( GLFWwindow *Context, rendertask_sequence &Tasks, uploadtask_sequence &Upload_Tasks, threading::condition_variable &Condition, std::atomic<bool> &Exit ) {
 
-    glfwMakeContextCurrent( Context );
+	if (Context)
+		glfwMakeContextCurrent( Context );
+
     // create a state object for this thread
     PyEval_AcquireLock();
     auto *threadstate { PyThreadState_New( m_mainthread->interp ) };
@@ -314,7 +398,15 @@ void python_taskqueue::run( GLFWwindow *Context, rendertask_sequence &Tasks, thr
                 {
                     // execute python code
                     task->run();
-                    error();
+					if (Context)
+						task->upload();
+					else
+					{
+						std::lock_guard<std::mutex> lock(Upload_Tasks.mutex);
+						Upload_Tasks.data.push_back(task);
+					}
+					if( PyErr_Occurred() != nullptr )
+						error();
                 }
                 // clear the thread state
                 PyEval_SaveThread();
@@ -333,10 +425,18 @@ void python_taskqueue::run( GLFWwindow *Context, rendertask_sequence &Tasks, thr
     PyEval_ReleaseLock();
 }
 
+void python_taskqueue::update()
+{
+	std::lock_guard<std::mutex> lock(m_uploadtasks.mutex);
+
+	for (auto &task : m_uploadtasks.data)
+		task->upload();
+
+	m_uploadtasks.data.clear();
+}
+
 void
 python_taskqueue::error() {
-
-    if( PyErr_Occurred() == nullptr ) { return; }
 
     if( m_stderr != nullptr ) {
         // std err pythona jest buforowane

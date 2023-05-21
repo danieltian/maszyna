@@ -10,6 +10,7 @@ http://mozilla.org/MPL/2.0/.
 #include "stdafx.h"
 #include "simulationenvironment.h"
 
+#include "simulationsounds.h"
 #include "Globals.h"
 #include "Timer.h"
 
@@ -20,9 +21,7 @@ world_environment Environment;
 } // simulation
 
 void
-world_environment::toggle_daylight() {
-
-    Global.FakeLight = !Global.FakeLight;
+world_environment::on_daylight_change() {
 
     if( Global.FakeLight ) {
         // for fake daylight enter fixed hour
@@ -36,7 +35,7 @@ world_environment::toggle_daylight() {
 
 // calculates current season of the year based on set simulation date
 void
-world_environment::compute_season( int const Yearday ) const {
+world_environment::compute_season( int const Yearday ) {
 
     using dayseasonpair = std::pair<int, std::string>;
 
@@ -60,11 +59,13 @@ world_environment::compute_season( int const Yearday ) const {
 
 // calculates current weather
 void
-world_environment::compute_weather() const {
+world_environment::compute_weather() {
 
     Global.Weather = (
-        Global.Overcast <= 0.25 ? "clear:" :
-        Global.Overcast <= 1.0 ? "cloudy:" :
+        Global.Overcast <= 0.10 ? "clear:" :
+        Global.Overcast <= 0.50 ? "scattered:" :
+        Global.Overcast <= 0.90 ? "broken:" :
+        Global.Overcast <= 1.00 ? "overcast:" :
         ( Global.Season != "winter:" ?
             "rain:" :
             "snow:" ) );
@@ -78,7 +79,14 @@ world_environment::init() {
     m_stars.init();
     m_clouds.Init();
     m_precipitation.init();
-    m_precipitationsound.deserialize( "rain-sound-loop", sound_type::single );
+    {
+        auto const rainsoundoverride { simulation::Sound_overrides.find( "weather.rainsound:" ) };
+        m_rainsound.deserialize(
+            ( rainsoundoverride != simulation::Sound_overrides.end() ?
+                rainsoundoverride->second :
+                "rain-sound-loop" ),
+            sound_type::single );
+    }
     m_wind = basic_wind{
         static_cast<float>( Random( 0, 360 ) ),
         static_cast<float>( Random( -5, 5 ) ),
@@ -104,7 +112,7 @@ world_environment::update() {
     // twilight factor can be reset later down, so we do it here while it's still reflecting state of the sun
     // turbidity varies from 2-3 during the day based on overcast, 3-4 after sunset to deal with sunlight bleeding too much into the sky from below horizon
     m_skydome.SetTurbidity(
-        2.f
+        2.25f
         + clamp( Global.Overcast, 0.f, 1.f )
         + interpolate( 0.f, 1.f, clamp( twilightfactor * 1.5f, 0.f, 1.f ) ) );
     m_skydome.SetOvercastFactor( Global.Overcast );
@@ -118,6 +126,7 @@ world_environment::update() {
         Global.DayLight.position = m_moon.getDirection();
         Global.DayLight.direction = -1.0f * m_moon.getDirection();
         keylightintensity = moonlightlevel;
+        m_lightintensity = moonlightlevel;
         // if the moon is up, it overrides the twilight
         twilightfactor = 0.0f;
         keylightcolor = glm::vec3( 255.0f / 255.0f, 242.0f / 255.0f, 202.0f / 255.0f );
@@ -128,6 +137,7 @@ world_environment::update() {
         Global.DayLight.position = m_sun.getDirection();
         Global.DayLight.direction = -1.0f * m_sun.getDirection();
         keylightintensity = sunlightlevel;
+        m_lightintensity = 1.0f;
         // include 'golden hour' effect in twilight lighting
         float const duskfactor = 1.0f - clamp( Global.SunAngle, 0.0f, 18.0f ) / 18.0f;
         keylightcolor = interpolate(
@@ -155,36 +165,56 @@ world_environment::update() {
     // tonal impact of skydome color is inversely proportional to how high the sun is above the horizon
     // (this is pure conjecture, aimed more to 'look right' than be accurate)
     float const ambienttone = clamp( 1.0f - ( Global.SunAngle / 90.0f ), 0.0f, 1.0f );
-    Global.DayLight.ambient[ 0 ] = interpolate( skydomehsv.z, skydomecolour.r, ambienttone );
-    Global.DayLight.ambient[ 1 ] = interpolate( skydomehsv.z, skydomecolour.g, ambienttone );
-    Global.DayLight.ambient[ 2 ] = interpolate( skydomehsv.z, skydomecolour.b, ambienttone );
+    float const ambientintensitynightfactor = 1.f - 0.75f * clamp( -m_sun.getAngle(), 0.0f, 18.0f ) / 18.0f;
+    Global.DayLight.ambient[ 0 ] = interpolate( skydomehsv.z, skydomecolour.r, ambienttone ) * ambientintensitynightfactor;
+    Global.DayLight.ambient[ 1 ] = interpolate( skydomehsv.z, skydomecolour.g, ambienttone ) * ambientintensitynightfactor;
+    Global.DayLight.ambient[ 2 ] = interpolate( skydomehsv.z, skydomecolour.b, ambienttone ) * ambientintensitynightfactor;
 
     Global.fLuminance = intensity;
 
     // update the fog. setting it to match the average colour of the sky dome is cheap
     // but quite effective way to make the distant items blend with background better
-    // NOTE: base brightness calculation provides scaled up value, so we bring it back to 'real' one here
-    Global.FogColor = m_skydome.GetAverageHorizonColor();
+    Global.FogColor =
+        interpolate( m_skydome.GetAverageColor(), m_skydome.GetAverageHorizonColor(), 0.25f )
+        * clamp<float>( Global.fLuminance, 0.25f, 1.f );
 
     // weather-related simulation factors
-    // TODO: dynamic change of air temperature and overcast levels
-    if( Global.Weather == "rain:" ) {
-        // reduce friction in rain
-        Global.FrictionWeatherFactor = 0.85f;
-        m_precipitationsound.play( sound_flags::exclusive | sound_flags::looping );
+    Global.FrictionWeatherFactor = (
+        Global.Weather == "rain:" ? 0.85f :
+        Global.Weather == "snow:" ? 0.75f :
+        1.0f );
+
+    Global.Period = (
+        m_sun.getAngle() > -12.0f ?
+            "day:" :
+            "night:" );
+
+    if( ( true == ( FreeFlyModeFlag || Global.CabWindowOpen ) )
+     && ( Global.Weather == "rain:" ) ) {
+        if( m_rainsound.is_combined() ) {
+            m_rainsound.pitch( Global.Overcast - 1.0 );
+        }
+        m_rainsound
+            .gain( m_rainsound.m_amplitudeoffset + m_rainsound.m_amplitudefactor * 1.f )
+            .play( sound_flags::exclusive | sound_flags::looping );
     }
-    else if( Global.Weather == "snow:" ) {
-        // reduce friction due to snow
-        Global.FrictionWeatherFactor = 0.75f;
+    else {
+        m_rainsound.stop();
     }
 
-    update_wind();
+	update_wind();
 }
 
 void
 world_environment::update_precipitation() {
 
     m_precipitation.update();
+}
+
+void
+world_environment::update_moon() {
+
+    m_moon.update( true );
 }
 
 void

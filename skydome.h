@@ -14,17 +14,23 @@ public:
 	
 	void SetTurbidity( const float Turbidity = 5.0f );
 	void SetExposure( const bool Linearexposure, const float Expfactor );		
-	void SetOvercastFactor( const float Overcast = 0.0f );
-	void SetGammaCorrection( const float Gamma = 2.2f );
+    void SetOvercastFactor( const float Overcast = 0.0f );
 
 	// update skydome
     void Update( glm::vec3 const &Sun );
-	// render skydome to screen
-	void Render();
 
     // retrieves average colour of the sky dome
     glm::vec3 GetAverageColor() { return m_averagecolour * 8.f / 6.f; }
     glm::vec3 GetAverageHorizonColor() { return m_averagehorizoncolour; }
+
+    std::vector<glm::vec3> const & vertices() const {
+        return m_vertices; }
+    std::vector<glm::vec3> & colors() {
+        return m_colours; }
+    std::vector<std::uint16_t> const & indices() const {
+        return m_indices; }
+    auto const & is_dirty() const { return m_dirty; }
+    auto & is_dirty() { return m_dirty; }
 
 private:
 	// shading parametrs
@@ -34,7 +40,6 @@ private:
     bool m_linearexpcontrol;
     float m_expfactor;
     float m_overcast;
-    float m_gammacorrection;
     glm::vec3 m_averagecolour;
     glm::vec3 m_averagehorizoncolour;
 
@@ -44,9 +49,7 @@ private:
     std::vector<std::uint16_t> m_indices;
 //    std::vector<float3> m_normals;
     std::vector<glm::vec3> m_colours;
-    GLuint m_vertexbuffer{ (GLuint)-1 };
-    GLuint m_indexbuffer{ (GLuint)-1 };
-    GLuint m_coloursbuffer{ (GLuint)-1 };
+    bool m_dirty { true }; // indicates sync state between simulation and gpu sides
 
 	static float m_distributionluminance[ 5 ][ 2 ];
     static float m_distributionxcomp[ 5 ][ 2 ];
@@ -61,3 +64,4 @@ private:
 	float PerezFunctionO1( float Perezcoeffs[ 5 ], const float Thetasun, const float Zenithval );
 	float PerezFunctionO2( float Perezcoeffs[ 5 ], const float Icostheta, const float Gamma, const float Cosgamma2, const float Zenithval );
 };
+

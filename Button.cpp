@@ -124,6 +124,7 @@ TButton::Turn( bool const State ) {
 }
 
 void TButton::Update( bool const Power ) {
+    // TODO: remove passing manually power state when LD is in place
 
     auto const state { Power && ( bData ? *bData : m_state ) };
 
@@ -156,4 +157,10 @@ void
 TButton::play() {
     if( m_state == true ) { m_soundfxincrease.play(); }
     else                  { m_soundfxdecrease.play(); }
+}
+
+void
+TButton::gain(float new_volume) {
+	m_soundfxincrease.gain(new_volume);
+	m_soundfxdecrease.gain(new_volume);
 }

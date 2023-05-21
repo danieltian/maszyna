@@ -22,54 +22,80 @@ driver_ui::driver_ui() {
 
     clear_panels();
     // bind the panels with ui object. maybe not the best place for this but, eh
-    push_back( &m_aidpanel );
-    push_back( &m_scenariopanel );
-    push_back( &m_timetablepanel );
-    push_back( &m_debugpanel );
-    push_back( &m_transcriptspanel );
+	add_external_panel( &m_aidpanel );
+	add_external_panel( &m_scenariopanel );
+	add_external_panel( &m_timetablepanel );
+	add_external_panel( &m_debugpanel );
+	if (Global.gui_showtranscripts)
+        add_external_panel( &m_transcriptspanel );
 
-    m_aidpanel.title = locale::strings[ locale::string::driver_aid_header ];
+	add_external_panel( &m_trainingcardpanel );
+	add_external_panel( &m_vehiclelist );
+	add_external_panel( &m_timepanel );
+	add_external_panel( &m_mappanel );
+	add_external_panel( &m_logpanel );
+	add_external_panel( &m_perfgraphpanel );
+	add_external_panel( &m_cameraviewpanel );
+    m_logpanel.is_open = false;
 
-    m_scenariopanel.title = locale::strings[ locale::string::driver_scenario_header ];
+    m_aidpanel.title = STR("Driving Aid");
+
+    m_scenariopanel.title = STR("Scenario");
     m_scenariopanel.size_min = { 435, 85 };
-    m_scenariopanel.size_max = { Global.iWindowWidth * 0.95, Global.iWindowHeight * 0.95 };
+    m_scenariopanel.size_max = { Global.fb_size.x * 0.95f, Global.fb_size.y * 0.95 };
 
-    m_timetablepanel.title = locale::strings[ locale::string::driver_timetable_header ];
-    m_timetablepanel.size_min = { 435, 70 };
-    m_timetablepanel.size_max = { 435, Global.iWindowHeight * 0.95 };
+    m_timetablepanel.title = STR("%-*.*s    Time: %d:%02d:%02d");
+    m_timetablepanel.size_min = { 435, 70};
+    m_timetablepanel.size_max = { 435, Global.fb_size.y * 0.95 };
 
-    m_transcriptspanel.title = locale::strings[ locale::string::driver_transcripts_header ];
+    m_transcriptspanel.title = STR("Transcripts");
     m_transcriptspanel.size_min = { 435, 85 };
-    m_transcriptspanel.size_max = { Global.iWindowWidth * 0.95, Global.iWindowHeight * 0.95 };
+    m_transcriptspanel.size_max = { Global.fb_size.x * 0.95, Global.fb_size.y * 0.95 };
+
+	if (Global.gui_defaultwindows) {
+		m_aidpanel.is_open = true;
+		m_scenariopanel.is_open = true;
+	}
+
+    if (Global.gui_trainingdefault) {
+        m_mappanel.is_open = true;
+        m_trainingcardpanel.is_open = true;
+        m_vehiclelist.is_open = true;
+    }
+}
+
+void driver_ui::render_menu_contents() {
+	ui_layer::render_menu_contents();
+
+	if (ImGui::BeginMenu(STR_C("Mode windows")))
+    {
+        ImGui::MenuItem(m_aidpanel.title.c_str(), "F1", &m_aidpanel.is_open);
+		ImGui::MenuItem(STR_C("Timetable"), "F2", &m_timetablepanel.is_open);
+		ImGui::MenuItem(m_scenariopanel.title.c_str(), "F3", &m_aidpanel.is_open);
+		ImGui::MenuItem(m_debugpanel.name().c_str(), "F12", &m_debugpanel.is_open);
+		ImGui::MenuItem(m_mappanel.name().c_str(), "Tab", &m_mappanel.is_open);
+        ImGui::MenuItem(m_transcriptspanel.name().c_str(), nullptr, &m_transcriptspanel.is_open);
+		ImGui::MenuItem(m_vehiclelist.name().c_str(), nullptr, &m_vehiclelist.is_open);
+		ImGui::MenuItem(m_trainingcardpanel.name().c_str(), nullptr, &m_trainingcardpanel.is_open);
+		ImGui::MenuItem(m_cameraviewpanel.name().c_str(), nullptr, &m_cameraviewpanel.is_open);
+		if (DebugModeFlag)
+			ImGui::MenuItem(m_perfgraphpanel.name().c_str(), nullptr, &m_perfgraphpanel.is_open);
+
+		if (ImGui::MenuItem(m_timepanel.name().c_str()))
+			m_timepanel.open();
+
+        ImGui::EndMenu();
+    }
 }
 
 // potentially processes provided input key. returns: true if key was processed, false otherwise
 bool
 driver_ui::on_key( int const Key, int const Action ) {
-    // TODO: pass the input first through an active ui element if there's any
-    // if the ui element shows no interest or we don't have one, try to interpret the input yourself:
-
-    if( Key == GLFW_KEY_ESCAPE ) {
-        // toggle pause
-        if( Action != GLFW_PRESS ) { return true; } // recognized, but ignored
-
-        if( Global.iPause & 1 ) {
-            // jeśli pauza startowa
-            // odpauzowanie, gdy po wczytaniu miało nie startować
-            Global.iPause ^= 1;
-        }
-        else if( ( Global.iMultiplayer & 2 ) == 0 ) {
-            // w multiplayerze pauza nie ma sensu
-            Global.iPause ^= 2; // zmiana stanu zapauzowania
-        }
+    if (ui_layer::on_key(Key, Action))
         return true;
-    }
 
-    // if the pause is on ignore block other input
-    if( m_paused ) { return true; }
-
-    switch( Key ) {
-
+	switch( Key ) {
+	    case GLFW_KEY_TAB:
         case GLFW_KEY_F1:
         case GLFW_KEY_F2:
         case GLFW_KEY_F3:
@@ -91,7 +117,13 @@ driver_ui::on_key( int const Key, int const Action ) {
     }
 
     switch (Key) {
-            
+
+	    case GLFW_KEY_TAB: {
+		    m_mappanel.is_open = !m_mappanel.is_open;
+
+			return true;
+	    }
+
         case GLFW_KEY_F1: {
             // basic consist info
             auto state = (
@@ -99,7 +131,7 @@ driver_ui::on_key( int const Key, int const Action ) {
                 ( m_aidpanel.is_expanded == false ) ? 1 :
                 2 );
             state = clamp_circular( ++state, 3 );
-            
+
             m_aidpanel.is_open = ( state > 0 );
             m_aidpanel.is_expanded = ( state > 1 );
 
@@ -113,7 +145,7 @@ driver_ui::on_key( int const Key, int const Action ) {
                 ( m_timetablepanel.is_expanded == false ) ? 1 :
                 2 );
             state = clamp_circular( ++state, 3 );
-            
+
             m_timetablepanel.is_open = ( state > 0 );
             m_timetablepanel.is_expanded = ( state > 1 );
 
@@ -121,7 +153,7 @@ driver_ui::on_key( int const Key, int const Action ) {
         }
 
         case GLFW_KEY_F3: {
-            // debug panel
+            // scenario panel
             m_scenariopanel.is_open = !m_scenariopanel.is_open;
             return true;
         }
@@ -164,30 +196,7 @@ driver_ui::update() {
      && ( false == Global.ControlPicking ) ) {
         set_cursor( ispaused );
     }
-    m_paused = ispaused;
-
-    set_tooltip( "" );
-
-    auto const *train { simulation::Train };
-
-    if( ( train != nullptr ) && ( false == FreeFlyModeFlag ) ) {
-        if( false == DebugModeFlag ) {
-            // in regular mode show control functions, for defined controls
-            set_tooltip( locale::label_cab_control( train->GetLabel( GfxRenderer.Pick_Control() ) ) );
-        }
-        else {
-            // in debug mode show names of submodels, to help with cab setup and/or debugging
-            auto const cabcontrol = GfxRenderer.Pick_Control();
-            set_tooltip( ( cabcontrol ? cabcontrol->pName : "" ) );
-        }
-    }
-    if( ( true == Global.ControlPicking ) && ( true == FreeFlyModeFlag ) && ( true == DebugModeFlag ) ) {
-        auto const scenerynode = GfxRenderer.Pick_Node();
-        set_tooltip(
-            ( scenerynode ?
-                scenerynode->name() :
-                "" ) );
-    }
+	m_paused = ispaused;
 
     ui_layer::update();
 }
@@ -197,7 +206,7 @@ driver_ui::set_cursor( bool const Visible ) {
 
     if( Visible ) {
         Application.set_cursor( GLFW_CURSOR_NORMAL );
-        Application.set_cursor_pos( Global.iWindowWidth / 2, Global.iWindowHeight / 2 );
+        Application.set_cursor_pos( Global.window_size.x / 2, Global.window_size.y / 2 );
     }
     else {
         Application.set_cursor( GLFW_CURSOR_DISABLED );
@@ -208,21 +217,25 @@ driver_ui::set_cursor( bool const Visible ) {
 // render() subclass details
 void
 driver_ui::render_() {
+	const std::string *rec_name = m_trainingcardpanel.is_recording();
+	if (rec_name && m_cameraviewpanel.set_state(true)) {
+		m_cameraviewpanel.rec_name = *rec_name;
+        m_cameraviewpanel.is_open = true;
+	} else if (!rec_name)
+		m_cameraviewpanel.set_state(false);
+
     // pause/quit modal
-    auto const popupheader { locale::strings[ locale::string::driver_pause_header ].c_str() };
-	if (m_paused && !m_pause_modal_opened)
-	{
-		m_pause_modal_opened = true;
-		ImGui::OpenPopup(popupheader);
-	}
-    if( ImGui::BeginPopupModal( popupheader, &m_pause_modal_opened, ImGuiWindowFlags_AlwaysAutoResize ) ) {
-        auto const popupwidth{ locale::strings[ locale::string::driver_pause_header ].size() * 7 };
-        if( ImGui::Button( locale::strings[ locale::string::driver_pause_resume ].c_str(), ImVec2( popupwidth, 0 ) ) ) {
-            auto const pausemask { 1 | 2 };
-            Global.iPause &= ~pausemask;
+	auto const popupheader { STR_C("Simulation Paused") };
+
+	ImGui::SetNextWindowSize(ImVec2(-1, -1));
+	if( ImGui::BeginPopupModal( popupheader, nullptr, 0 ) ) {
+		if( ( ImGui::Button( STR_C("Resume"), ImVec2( 150, 0 ) ) )
+		 || ( ImGui::IsKeyPressed( ImGui::GetKeyIndex( ImGuiKey_Escape ) ) ) )
+		{
+			m_relay.post(user_command::pausetoggle, 0.0, 0.0, GLFW_PRESS, 0);
         }
-        if( ImGui::Button( locale::strings[ locale::string::driver_pause_quit ].c_str(), ImVec2( popupwidth, 0 ) ) ) {
-            glfwSetWindowShouldClose( m_window, 1 );
+        if( ImGui::Button( STR_C("Quit"), ImVec2( 150, 0 ) ) ) {
+            Application.queue_quit(false);
         }
 		if (!m_paused)
 		{
@@ -231,4 +244,16 @@ driver_ui::render_() {
 		}
         ImGui::EndPopup();
     }
+	if (m_paused && !m_pause_modal_opened)
+	{
+		m_pause_modal_opened = true;
+		ImGui::OpenPopup(popupheader);
+	}
+
+	if (Global.desync != 0.0f) {
+		ImGui::SetNextWindowSize(ImVec2(-1, -1));
+		if (ImGui::Begin("network", nullptr, ImGuiWindowFlags_NoCollapse))
+			ImGui::Text("desync: %0.2f", Global.desync);
+		ImGui::End();
+	}
 }

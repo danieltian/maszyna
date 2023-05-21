@@ -95,6 +95,8 @@ class TSwitchExtension
     Math3D::vector3 vTrans; // docelowa translacja przesuwnicy
     material_handle m_material3 = 0; // texture of auto generated switch trackbed
     gfx::geometry_handle Geometry3; // geometry of auto generated switch trackbed
+
+	gfx::geometrybank_handle map_geometry[6]; // geometry for map visualisation
 };
 
 class TIsolated
@@ -143,14 +145,15 @@ private:
 };
 
 // trajektoria ruchu - opakowanie
-class TTrack : public scene::basic_node {
-
+class TTrack : public scene::basic_node
+{
     friend opengl_renderer;
+    friend opengl33_renderer;
     // NOTE: temporary arrangement
     friend itemproperties_panel;
 
 private:
-    TIsolated * pIsolated = nullptr; // obwód izolowany obsługujący zajęcia/zwolnienia grupy torów
+    std::vector<TIsolated*> Isolated; // obwód izolowany obsługujący zajęcia/zwolnienia grupy torów
 	std::shared_ptr<TSwitchExtension> SwitchExtension; // dodatkowe dane do toru, który jest zwrotnicą
     std::shared_ptr<TSegment> Segment;
     TTrack * trNext = nullptr; // odcinek od strony punktu 2 - to powinno być w segmencie
@@ -178,6 +181,7 @@ private:
     geometryhandle_sequence Geometry2; // geometry chunks textured with texture 2
 
     std::vector<segment_data> m_paths; // source data for owned paths
+	int iterate_stamp = 0;
 
 public:
     using dynamics_sequence = std::deque<TDynamicObject *>;
@@ -192,6 +196,7 @@ public:
         m_events1,
         m_events2;
     bool m_events { false }; // Ra: flaga informująca o obecności eventów
+    std::pair<std::string, TMemCell *> m_friction { "", nullptr };
 
     int iNextDirection = 0; // 0:Point1, 1:Point2, 3:do odchylonego na zwrotnicy
     int iPrevDirection = 0; // domyślnie wirtualne odcinki dołączamy stroną od Point1
@@ -273,7 +278,17 @@ public:
     std::vector<glm::dvec3>
         endpoints() const;
 
-    void create_geometry( gfx::geometrybank_handle const &Bank ); // wypełnianie VBO
+	gfx::geometrybank_handle extra_map_geometry; // handle for map highlighting
+
+	TTrack *Next(TTrack *visitor);
+	double ActiveLength();
+
+	void create_geometry( gfx::geometrybank_handle const &Bank ); // wypełnianie VBO
+	void create_map_geometry(std::vector<gfx::basic_vertex> &Bank, const gfx::geometrybank_handle Extra);
+	void get_map_active_paths(map_colored_paths &handles);
+    void get_map_paths_for_state(map_colored_paths &handles, int state);
+	void get_map_future_paths(map_colored_paths &handles);
+	glm::vec3 get_nearest_point(const glm::dvec3 &point) const;
     void RenderDynSounds(); // odtwarzanie dźwięków pojazdów jest niezależne od ich wyświetlania
 
     void RaOwnerSet( scene::basic_cell *o ) {
@@ -285,15 +300,19 @@ public:
 
     void RadioStop();
     void AxleCounter(int i, TDynamicObject *o) {
-        if (pIsolated)
-            pIsolated->Modify(i, o); }; // dodanie lub odjęcie osi
-    std::string IsolatedName();
+        for (TIsolated *iso : Isolated)
+            iso->Modify(i, o); }; // dodanie lub odjęcie osi
+    std::string RemoteIsolatedName();
+    void AddIsolated(TIsolated *iso) {
+        Isolated.push_back(iso);
+    }
     double WidthTotal();
     bool IsGroupable();
     int TestPoint( Math3D::vector3 *Point);
     void MovedUp1(float const dh);
     void VelocitySet(float v);
     double VelocityGet();
+    float Friction() const;
     void ConnectionsLog();
     bool DoubleSlip() const;
     static void fetch_default_profiles();

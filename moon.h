@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GL/glew.h"
+#include "winheaders.h"
 
 // TODO: sun and moon share code as celestial bodies, we could make a base class out of it
 
@@ -11,7 +11,7 @@ public:
 
 // methods:
     void init();
-    void update();
+    void update( bool const Includephase = false );
 	void render();
 	// returns vector pointing at the sun
 	glm::vec3 getDirection();
@@ -53,7 +53,6 @@ protected:
     float normalize( const float Value ) const;
 
 // members:
-	GLUquadricObj *moonsphere;	// temporary handler for moon positioning test
 
 	struct celestialbody {	// main planet parameters
 

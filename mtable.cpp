@@ -41,12 +41,63 @@ std::string TTrainParameters::NextStop() const
         return "[End of route]"; //że niby koniec
 }
 
+sound_source
+TTrainParameters::next_stop_sound() const {
+    if( StationIndex > StationCount ) {
+        return { sound_placement::engine };
+    }
+    for( auto stationidx { StationIndex }; stationidx < StationCount + 1; ++stationidx ) {
+        auto &station{ TimeTable[ stationidx ] };
+        if( station.Ah == -1 ) {
+            continue;
+        }
+        // specified arrival time means it's a scheduled stop
+        return station.name_sound;
+    }
+    // shouldn't normally get here, unless the timetable is malformed
+    return { sound_placement::engine };
+}
+
+sound_source
+TTrainParameters::last_stop_sound() const {
+
+    return TimeTable[ StationCount ].name_sound;
+}
+
 bool TTrainParameters::IsStop() const
 { // zapytanie, czy zatrzymywać na następnym punkcie rozkładu
-    if ((StationIndex < StationCount))
+    if ((StationIndex <= StationCount))
         return TimeTable[StationIndex].Ah >= 0; //-1 to brak postoju
     else
         return true; // na ostatnim się zatrzymać zawsze
+}
+
+bool TTrainParameters::IsLastStop() const {
+
+    return ( StationIndex >= StationCount );
+}
+
+
+bool TTrainParameters::IsMaintenance() const {
+    if( ( StationIndex <= StationCount ) )
+        return TimeTable[ StationIndex ].is_maintenance;
+    else
+        return false;
+}
+
+int TTrainParameters::radio_channel() const {
+    if( ( StationIndex <= StationCount ) )
+        return TimeTable[ StationIndex ].radio_channel;
+    else
+        return -1;
+}
+
+// returns: sound file associated with current station, or -1
+sound_source TTrainParameters::current_stop_sound() const {
+    if( ( StationIndex <= StationCount ) )
+        return TimeTable[ StationIndex ].name_sound;
+    else
+        return { sound_placement::engine };
 }
 
 bool TTrainParameters::UpdateMTable( scenario_time const &Time, std::string const &NewName ) {
@@ -129,6 +180,15 @@ bool TTrainParameters::IsTimeToGo(double hh, double mm)
         return false; // dalej nie jechać
 }
 
+// returns: difference between specified time and scheduled departure from current stop, in seconds
+double TTrainParameters::seconds_until_departure( double const Hour, double const Minute ) const {
+
+    if( ( TimeTable[ StationStart ].Ah < 0 ) ) { // passthrough
+        return 0;
+    }
+    return ( 60.0 * CompareTime( Hour, Minute, TimeTable[ StationStart ].Dh, TimeTable[ StationStart ].Dm ) );
+}
+
 std::string TTrainParameters::ShowRelation() const
 /*zwraca informację o relacji*/
 {
@@ -151,6 +211,7 @@ void TTrainParameters::NewName(std::string const &NewTrainName)
     TrainName = NewTrainName;
     StationCount = 0;
     StationIndex = 0;
+    StationStart = 0;
     NextStationName = "nowhere";
     LastStationLatency = 0;
     Direction = 1;
@@ -208,6 +269,7 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
         // Ra 2014-09: ustalić zasady wyznaczenia pierwotnego pliku przy przesuniętych rozkładach
         // (kolejny pociąg dostaje numer +2)
         fin.open(s.c_str()); // otwieranie pliku
+		replace_slashes(s);
 
         if (!fin.is_open())
         { // jeśli nie ma pliku
@@ -227,7 +289,7 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
             while (fin.good() && !((ConversionError != 0) || EndTable))
             {
                 std::getline(fin, lines); /*wczytanie linii*/
-                if (lines.find("___________________") != std::string::npos) /*linia pozioma górna*/
+                if (contains( lines, "___________________") ) /*linia pozioma górna*/
                 {
                     fin >> s;
                     if (s == "[") /*lewy pion*/
@@ -250,14 +312,33 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
                 // pliku}
                 // ConversionError:=-7 {błąd niezgodności}
                 TrainName = s; // nadanie nazwy z pliku TXT (bez ścieżki do pliku)
+				while (fin >> s || fin.bad())
+				{
+					if (contains( s,"_______|") )
+					{
+						break;
+					}
+					if (s == "Kategoria")
+					{
+						do
+						{
+							fin >> s;
+						} while (!((s == "|") || (fin.bad())));
+						fin >> TrainCategory;
+		                        continue;
+					}
+					if (s == "Nazwa")
+			                {
+			                        do
+			                        {
+			                            fin >> s;
+				                } while (!((s == "|") || (fin.bad())));
+			                        fin >> TrainLabel;
+			                        continue;
+			                 }
+				} // while (!(s == "Seria"));
                 // else
                 { /*czytaj naglowek*/
-                    while (fin >> s || !fin.bad())
-                    {
-                        if (s.find("_______|") != std::string::npos)
-                            break;
-                        // fin >> s;
-                    } // while (!(s.find("_______|") != std::string::npos) || fin.eof());
                     while (fin >> s || !fin.bad())
                     {
                         if (s == "[")
@@ -314,7 +395,8 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
                     do
                     {
                         fin >> s;
-                    } while (!(s.find("[______________") != std::string::npos || fin.bad()));
+                    } while (!(contains( s,"[______________" ) || fin.bad()));
+                    auto activeradiochannel{ -1 };
                     while (!fin.bad() && !EndTable)
                     {
                         ++StationCount;
@@ -328,21 +410,20 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
                                 fin >> s;
                             else
                                 ConversionError = -4;
-                            if (s.find("|") == std::string::npos)
+                            if (false == contains( s,"|") )
                             {
                                 record->km = atof(s.c_str());
                                 fin >> s;
                             }
-                            if (s.find("|_____|") !=
-                                std::string::npos) /*zmiana predkosci szlakowej*/
+                            if (contains( s,"|_____|")) /*zmiana predkosci szlakowej*/
                                 UpdateVelocity(StationCount, vActual);
                             else
                             {
                                 fin >> s;
-                                if (s.find("|") == std::string::npos)
+                                if (false == contains(s,"|"))
                                     vActual = atof(s.c_str());
                             }
-                            while (s.find("|") == std::string::npos)
+                            while (false == contains( s,"|"))
                                 fin >> s;
                             fin >> record->StationName;
                             // get rid of non-ascii chars. TODO: run correct version based on locale
@@ -355,7 +436,7 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
                             fin >> s;
                             if (s != "|")
                             {
-                                if (s.find(hrsd) != std::string::npos)
+                                if (contains( s, hrsd) )
                                 {
                                     record->Ah = atoi( s.substr(0, s.find(hrsd)).c_str()); // godzina przyjazdu
                                     record->Am = atof(s.substr(s.find(hrsd) + 1, s.length()).c_str()); // minuta przyjazdu
@@ -377,7 +458,7 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
                                 fin >> s;
                             } while (!((s == "[") || fin.bad()));
                             fin >> s;
-                            if (s.find("|") == std::string::npos)
+                            if (false == contains(s,"|"))
                             {
                                 /*tu s moze byc miejscem zmiany predkosci szlakowej*/
                                 fin >> s;
@@ -388,10 +469,10 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
                             else
                             {
                                 fin >> s;
-                                if (s.find("|") == std::string::npos)
+                                if (false == contains(s,"|"))
                                     vActual = atof(s.c_str());
                             }
-                            while (s.find("|") == std::string::npos)
+                            while (false == contains(s,"|"))
                                 fin >> s;
                             // stationware. added fix for empty entry
                             fin >> s;
@@ -401,11 +482,36 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
                                 record->StationWare += s;
                                 fin >> s;
                             }
+                            // cache relevant station data
+                            record->is_maintenance = ( contains( s, "pt" ) );
+                            {
+                                auto const stationware { Split( record->StationWare, ',' ) };
+                                for( auto const &entry : stationware ) {
+                                    if( entry.front() != 'R' ) {
+                                        continue;
+                                    }
+                                    auto const entrysplit { split_string_and_number( entry ) };
+                                    if( ( entrysplit.first == "R" )
+                                     && ( entrysplit.second <= 10 ) ) {
+                                        auto const radiochannel { entrysplit.second };
+                                        if( ( record->radio_channel == -1 )
+                                         || ( radiochannel != activeradiochannel ) ) {
+                                            // if the station has more than one radiochannel listed,
+                                            // it generally means we should switch to the one we weren't using so far
+                                            // TODO: reverse this behaviour (keep the channel used so far) once W28 signs are included in the system
+                                            record->radio_channel = radiochannel;
+                                        }
+                                    }
+                                }
+                                if( record->radio_channel != -1 ) {
+                                    activeradiochannel = record->radio_channel;
+                                }
+                            }
                             record->TrackNo = atoi(s.c_str());
                             fin >> s;
                             if (s != "|")
                             {
-                                if (s.find(hrsd) != std::string::npos)
+                                if (contains( s, hrsd) )
                                 {
                                     record->Dh = atoi(s.substr(0, s.find(hrsd)).c_str()); // godzina odjazdu
                                     record->Dm = atof(s.substr(s.find(hrsd) + 1, s.length()).c_str()); // minuta odjazdu
@@ -430,28 +536,27 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
                             do
                             {
                                 fin >> s;
-                            } while (!((s.find("[") != std::string::npos) || fin.bad()));
-                            if (s.find("_|_") == std::string::npos)
+                            } while (!(contains( s, "[" ) || fin.bad()));
+                            if (false == contains( s, "_|_"))
                                 fin >> s;
-                            if (s.find("|") == std::string::npos)
+                            if (false == contains( s, "|"))
                             {
                                 /*tu s moze byc miejscem zmiany predkosci szlakowej*/
                                 fin >> s;
                             }
-                            if (s.find("|_____|") !=
-                                std::string::npos) /*zmiana predkosci szlakowej*/
+                            if (contains( s, "|_____|") ) /*zmiana predkosci szlakowej*/
                                 UpdateVelocity(StationCount, vActual);
                             else
                             {
                                 fin >> s;
-                                if (s.find("|") == std::string::npos)
+                                if (false == contains( s, "|"))
                                     vActual = atof(s.c_str());
                             }
-                            while (s.find("|") == std::string::npos)
+                            while (false == contains( s, "|" ) )
                                 fin >> s;
-                            while ((s.find("]") == std::string::npos))
+                            while ((false == contains( s,"]") ))
                                 fin >> s;
-                            if (s.find("_|_") != std::string::npos)
+                            if (contains( s,"_|_") )
                                 EndTable = true;
                         } /*timetableline*/
                     }
@@ -468,9 +573,10 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
                 TimeTable[1].Ah = TimeTable[1].Dh;
                 TimeTable[1].Am = TimeTable[1].Dm;
             }
-        // NextStationName:=TimeTable[1].StationName;
-        /*  TTVmax:=TimeTable[1].vmax;  */
     }
+    //
+    load_sounds();
+    // potentially offset table times
     auto const timeoffset { static_cast<int>( Global.ScenarioTimeOffset * 60 ) + iPlus };
     if( timeoffset != 0 ) // jeżeli jest przesunięcie rozkładu
     {
@@ -495,6 +601,75 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
     return ConversionError == 0;
 }
 
+void
+TTrainParameters::load_sounds() {
+
+    for( auto stationidx = 1; stationidx < StationCount + 1; ++stationidx ) {
+        auto &station { TimeTable[ stationidx ] };
+        if( station.Ah == -1 ) {
+            continue;
+        }
+        // specified arrival time means it's a scheduled stop
+        auto const stationname { (
+            ends_with( station.StationName, "_po" ) ?
+                station.StationName.substr( 0, station.StationName.size() - 3 ) :
+                station.StationName ) };
+
+        auto const lookup {
+            FileExists(
+                { Global.asCurrentSceneryPath + stationname, std::string{ szSoundPath } + "sip/" + stationname },
+                { ".ogg", ".flac", ".wav" } ) };
+        if( lookup.first.empty() ) {
+            continue;
+        }
+        //  wczytanie dźwięku odjazdu w wersji radiowej (słychać tylko w kabinie)
+        station.name_sound =
+            sound_source{ sound_placement::engine, EU07_SOUND_CABANNOUNCEMENTCUTOFFRANGE }
+                .deserialize( lookup.first + lookup.second, sound_type::single );
+    }
+}
+
+bool TTrainParameters::DirectionChange()
+// sprawdzenie, czy po zatrzymaniu wykonać kolejne komendy
+{
+    if ((StationIndex > 0) && (StationIndex < StationCount)) // dla ostatniej stacji nie
+        if (contains( TimeTable[StationIndex].StationWare, '@') )
+            return true;
+    return false;
+}
+
+void TTrainParameters::serialize( dictionary_source *Output ) const {
+
+    Output->insert( "trainnumber", TrainName );
+	Output->insert( "traincategory", TrainCategory );
+	Output->insert( "trainname", TrainLabel );
+    Output->insert( "train_brakingmassratio", BrakeRatio );
+    Output->insert( "train_enginetype", LocSeries );
+    Output->insert( "train_engineload", LocLoad );
+
+    Output->insert( "train_stationfrom", Relation1 );
+    Output->insert( "train_stationto", Relation2 );
+    Output->insert( "train_stationindex", StationIndex );
+    Output->insert( "train_stationcount", StationCount );
+    Output->insert( "train_stationstart", StationStart );
+    if( StationCount > 0 ) {
+        // timetable stations data, if there's any
+        for( auto stationidx = 1; stationidx <= StationCount; ++stationidx ) {
+            auto const stationlabel { "train_station" + std::to_string( stationidx ) + "_" };
+            auto const &timetableline { TimeTable[ stationidx ] };
+            Output->insert( ( stationlabel + "name" ), Bezogonkow( timetableline.StationName ) );
+            Output->insert( ( stationlabel + "fclt" ), Bezogonkow( timetableline.StationWare ) );
+            Output->insert( ( stationlabel + "lctn" ), timetableline.km );
+            Output->insert( ( stationlabel + "vmax" ), timetableline.vmax );
+            Output->insert( ( stationlabel + "ah" ), timetableline.Ah );
+            Output->insert( ( stationlabel + "am" ), timetableline.Am );
+            Output->insert( ( stationlabel + "dh" ), timetableline.Dh );
+            Output->insert( ( stationlabel + "dm" ), timetableline.Dm );
+            Output->insert( ( stationlabel + "tracks" ), timetableline.TrackNo );
+        }
+    }
+}
+
 void TMTableTime::UpdateMTableTime(double deltaT)
 // dodanie czasu (deltaT) w sekundach, z przeliczeniem godziny
 {
@@ -513,43 +688,5 @@ void TMTableTime::UpdateMTableTime(double deltaT)
     {
         hh -= 24;
         ++dd; // zwiększenie numeru dnia
-    }
-}
-
-bool TTrainParameters::DirectionChange()
-// sprawdzenie, czy po zatrzymaniu wykonać kolejne komendy
-{
-    if ((StationIndex > 0) && (StationIndex < StationCount)) // dla ostatniej stacji nie
-        if (TimeTable[StationIndex].StationWare.find('@') != std::string::npos)
-            return true;
-    return false;
-}
-
-void TTrainParameters::serialize( dictionary_source *Output ) const {
-
-    Output->insert( "trainnumber", TrainName );
-    Output->insert( "train_brakingmassratio", BrakeRatio );
-    Output->insert( "train_enginetype", LocSeries );
-    Output->insert( "train_engineload", LocLoad );
-
-    Output->insert( "train_stationfrom", Relation1 );
-    Output->insert( "train_stationto", Relation2 );
-    Output->insert( "train_stationindex", StationIndex );
-    Output->insert( "train_stationcount", StationCount );
-    if( StationCount > 0 ) {
-        // timetable stations data, if there's any
-        for( auto stationidx = 1; stationidx <= StationCount; ++stationidx ) {
-            auto const stationlabel { "train_station" + std::to_string( stationidx ) + "_" };
-            auto const &timetableline { TimeTable[ stationidx ] };
-            Output->insert( ( stationlabel + "name" ), Bezogonkow( timetableline.StationName ) );
-            Output->insert( ( stationlabel + "fclt" ), Bezogonkow( timetableline.StationWare ) );
-            Output->insert( ( stationlabel + "lctn" ), timetableline.km );
-            Output->insert( ( stationlabel + "vmax" ), timetableline.vmax );
-            Output->insert( ( stationlabel + "ah" ), timetableline.Ah );
-            Output->insert( ( stationlabel + "am" ), timetableline.Am );
-            Output->insert( ( stationlabel + "dh" ), timetableline.Dh );
-            Output->insert( ( stationlabel + "dm" ), timetableline.Dm );
-            Output->insert( ( stationlabel + "tracks" ), timetableline.TrackNo );
-        }
     }
 }

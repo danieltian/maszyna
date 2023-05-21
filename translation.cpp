@@ -13,492 +13,347 @@ http://mozilla.org/MPL/2.0/.
 
 #include "stdafx.h"
 #include "translation.h"
-
+#include "Logs.h"
 #include "Globals.h"
+#include "MOVER.h"
 
-namespace locale {
+void locale::init()
+{
+	std::fstream stream("lang/" + Global.asLang + ".po", std::ios_base::in | std::ios_base::binary);
 
-void
-init() {
-    // TODO: import localized strings from localization files
-    std::unordered_map<std::string, std::vector<std::string>> stringmap;
+	if (!stream.is_open()) {
+		WriteLog("translation: cannot open lang file: lang/" + Global.asLang + ".po");
+		return;
+	}
 
-    stringmap.insert(
-    { "en",
-      {
-        "Driving Aid",
-        "Throttle:  %2d+%d %c%s",
-        " Speed: %d km/h (limit %d km/h%s)%s",
-        ", new limit: %d km/h in %.1f km",
-        " Grade: %.1f%%%%",
-        "Brakes:  %4.1f+%-2.0f%c%s",
-        " Pressure: %.2f kPa (train pipe: %.2f kPa)",
-        "!ALERTER! ",
-        "!SHP!",
-        " Loading/unloading in progress (%d s left)",
-        " Another vehicle ahead (distance: %.1f m)",
+	crashreport_add_info("translation", Global.asLang);
 
-        "Scenario",
-        "Assignment",
-        "Current task:",
-        "Wait for orders",
-        "Start the engine",
-        "Shut down the engine",
-        "Change direction",
-        "Couple to consist ahead",
-        "Uncouple %s",
-        "the engine",
-        "the engine plus the next vehicle",
-        "the engine plus %d next vehicles",
-        "the engine plus %d next vehicles",
-        "Shunt according to signals",
-        "Loose shunt according to signals",
-        "Drive according to signals and timetable",
-        "Bank consist ahead",
+	while (parse_translation(stream));
 
-        "%-*.*s    Time: %d:%02d:%02d", // HACK: some manual padding to account for longer 'time' equivalent in polish version
-        "Timetable",
-        "(no timetable)",
-        "Consist weight: %d t (specified) %d t (actual)\nConsist length: %d m",
-
-        "Transcripts",
-
-        "Simulation Paused",
-        "Resume",
-        "Quit",
-
-        "Name: %s%s\nLoad: %.0f %s\nStatus: %s%s\nCouplers:\n front: %s\n rear:  %s",
-        ", owned by: ",
-        "none",
-        "Devices: %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%s%s\nPower transfers: %.0f@%.0f%s%s[%.0f]%s%s%.0f@%.0f",
-        " radio: ",
-        " oil pressure: ",
-        "Controllers:\n master: %d(%d), secondary: %s\nEngine output: %.1f, current: %.0f\nRevolutions:\n engine: %.0f, motors: %.0f\n engine fans: %.0f, motor fans: %.0f+%.0f, cooling fans: %.0f+%.0f",
-        " (shunt mode)",
-        "\nTemperatures:\n engine: %.2f, oil: %.2f, water: %.2f%c%.2f",
-        "Brakes:\n train: %.2f, independent: %.2f, mode: %d, delay: %s, load flag: %d\nBrake cylinder pressures:\n train: %.2f, independent: %.2f, status: 0x%.2x\nPipe pressures:\n brake: %.2f (hat: %.2f), main: %.2f, control: %.2f\nTank pressures:\n auxiliary: %.2f, main: %.2f, control: %.2f",
-        " pantograph: %.2f%cMT",
-        "Forces:\n tractive: %.1f, brake: %.1f, friction: %.2f%s\nAcceleration:\n tangential: %.2f, normal: %.2f (path radius: %s)\nVelocity: %.2f, distance traveled: %.2f\nPosition: [%.2f, %.2f, %.2f]",
-
-        "master controller",
-        "master controller",
-        "second controller",
-        "shunt mode power",
-        "tempomat",
-        "reverser",
-        "train brake",
-        "independent brake",
-        "manual brake",
-        "emergency brake",
-        "brake acting speed",
-        "brake acting speed: cargo",
-        "brake acting speed: rapid",
-        "brake operation mode",
-        "motor overload relay threshold",
-        "water pump",
-        "water pump breaker",
-        "water heater",
-        "water heater breaker",
-        "water circuits link",
-        "fuel pump",
-        "oil pump",
-        "motor blowers A",
-        "motor blowers B",
-        "all motor blowers",
-        "cooling fans",
-        "line breaker",
-        "line breaker",
-        "alerter",
-        "independent brake releaser",
-        "sandbox",
-        "wheelspin brake",
-        "horn",
-        "low tone horn",
-        "high tone horn",
-        "whistle",
-        "motor overload relay reset",
-        "converter overload relay reset",
-        "motor connectors",
-        "left door (permit)",
-        "right door (permit)",
-        "door (permit)",
-        "left door",
-        "right door",
-        "left door (open)",
-        "right door (open)",
-        "left door (close)",
-        "right door (close)",
-        "all doors (open)",
-        "all doors (close)",
-        "doorstep",
-        "door control mode",
-        "departure signal",
-        "upper headlight",
-        "left headlight",
-        "right headlight",
-        "headlights dimmer",
-        "left marker light",
-        "right marker light",
-        "light pattern",
-        "rear upper headlight",
-        "rear left headlight",
-        "rear right headlight",
-        "rear left marker light",
-        "rear right marker light",
-        "compressor",
-        "local compressor",
-        "converter",
-        "local converter",
-        "converter",
-        "line breaker",
-        "radio",
-        "radio channel",
-        "radio channel",
-        "radio channel",
-        "radiostop test",
-        "radiostop",
-        "radio call 3",
-        "pantograph A",
-        "pantograph B",
-        "pantograph A",
-        "pantograph B",
-        "all pantographs",
-        "selected pantograph",
-        "selected pantograph",
-        "pantograph compressor",
-        "pantograph 3 way valve",
-        "heating",
-        "braking indicator",
-        "door locking",
-        "current indicator source",
-        "instrument light",
-        "dashboard light",
-        "timetable light",
-        "interior light",
-        "interior light dimmer",
-        "battery",
-        "interactive part",
-        "interactive part",
-        "interactive part",
-        "interactive part",
-        "interactive part",
-        "interactive part",
-        "interactive part",
-        "interactive part",
-        "interactive part",
-        "interactive part"
-      }
-    } );
-
-    stringmap.insert(
-    { "pl",
-      {
-        "Pomocnik",
-        "Nastawnik: %2d+%d %c%s",
-        " Predkosc: %d km/h (limit %d km/h%s)%s",
-        ", nowy limit: %d km/h za %.1f km",
-        " Nachylenie: %.1f%%%%",
-        "Hamulce: %4.1f+%-2.0f%c%s",
-        " Cisnienie: %.2f kPa (przewod glowny: %.2f kPa)",
-        "!CZUWAK!  ",
-        "!SHP!",
-        " Wsiadanie/wysiadanie pasazerow (do zakonczenia %d s)",
-        " Inny pojazd na drodze (odleglosc: %.1f m)",
-
-        "Scenariusz",
-        "Zlecenie",
-        "Biezace zadanie:",
-        "Oczekiwac dalszych polecen",
-        "Przygotowac pojazd do jazdy",
-        "Wylaczyc pojazd",
-        "Zmienic kierunek jazdy",
-        "Sprzac sie ze skladem z przodu",
-        "Odpiac %s",
-        "pojazd prowadzacy",
-        "pojazd prowadzacy plus kolejny",
-        "pojazd prowadzacy plus %d kolejne",
-        "pojazd prowadzacy plus %d kolejnych",
-        "Prowadzic manewry wedlug sygnalow",
-        "Prowadzic manewry przetaczania odrzutem",
-        "Prowadzic sklad wedlug sygnalow i rozkladu",
-        "Popychac sklad z przodu",
-
-        "%-*.*s Godzina: %d:%02d:%02d",
-        "Rozklad jazdy",
-        "(brak rozkladu)",
-        "Brutto: %d t (rozkladowe) %d t (rzeczywiste)\nDlugosc pociagu: %d m",
-
-        "Transkrypcje",
-
-        "Symulacja wstrzymana",
-        "Wznow",
-        "Zakoncz",
-
-        "Nazwa: %s%s\nLadunek: %.0f %s\nStatus: %s%s\nSprzegi:\n przedni: %s\n tylny:   %s",
-        ", wlasciciel: ",
-        "wolny",
-        "Urzadzenia: %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%s%s\nTransfer pradow: %.0f@%.0f%s%s[%.0f]%s%s%.0f@%.0f",
-        " radio: ",
-        " cisn.oleju: ",
-        "Nastawniki:\n glowny: %d(%d), dodatkowy: %s\nMoc silnika: %.1f, prad silnika: %.0f\nObroty:\n silnik: %.0f, motory: %.0f\n went.silnika: %.0f, went.motorow: %.0f+%.0f, went.chlodnicy: %.0f+%.0f",
-        " (tryb manewrowy)",
-        "\nTemperatury:\n silnik: %.2f, olej: %.2f, woda: %.2f%c%.2f",
-        "Hamulce:\n zespolony: %.2f, pomocniczy: %.2f, tryb: %d, nastawa: %s, ladunek: %d\nCisnienie w cylindrach:\n zespolony: %.2f, pomocniczy: %.2f, status: 0x%.2x\nCisnienia w przewodach:\n glowny: %.2f (kapturek: %.2f), zasilajacy: %.2f, kontrolny: %.2f\nCisnienia w zbiornikach:\n pomocniczy: %.2f, glowny: %.2f, sterujacy: %.2f",
-        " pantograf: %.2f%cZG",
-        "Sily:\n napedna: %.1f, hamowania: %.1f, tarcie: %.2f%s\nPrzyspieszenia:\n styczne: %.2f, normalne: %.2f (promien: %s)\nPredkosc: %.2f, pokonana odleglosc: %.2f\nPozycja: [%.2f, %.2f, %.2f]",
-
-        "nastawnik jazdy",
-        "nastawnik jazdy",
-        "nastawnik dodatkowy",
-        "sterowanie analogowe",
-        "tempomat",
-        "nastawnik kierunku",
-        "hamulec zespolony",
-        "hamulec pomocniczy",
-        "hamulec reczny",
-        "hamulec bezpieczenstwa",
-        "nastawa hamulca",
-        "nastawa hamulca: towarowy",
-        "nastawa hamulca: pospieszny",
-        "tryb pracy hamulca",
-        "zakres pradu rozruchu",
-        "pompa wody",
-        "wylacznik samoczynny pompy wody",
-        "podgrzewacz wody",
-        "wylacznik samoczynny podgrzewacza wody",
-        "zawor polaczenia obiegow wody",
-        "pompa paliwa",
-        "pompa oleju",
-        "wentylatory silnikow trakcyjnych A",
-        "wentylatory silnikow trakcyjnych B",
-        "wszystkie wentylatory silnikow trakcyjnych",
-        "wentylatory oporow rozruchowych",
-        "wylacznik szybki",
-        "wylacznik szybki",
-        "czuwak",
-        "odluzniacz",
-        "piasecznica",
-        "hamulec przeciwposlizgowy",
-        "syrena",
-        "syrena (ton niski)",
-        "syrena (ton wysoki)",
-        "gwizdawka",
-        "przekaznik nadmiarowy silnikow trakcyjnych",
-        "przekaznik nadmiarowy przetwornicy",
-        "styczniki liniowe",
-        "drzwi lewe (zezwol)",
-        "drzwi prawe (zezwol)",
-        "drzwi (zezwol)",
-        "drzwi lewe",
-        "drzwi prawe",
-        "drzwi lewe (otworz)",
-        "drzwi prawe (otworz)",
-        "drzwi lewe (zamknij)",
-        "drzwi prawe (zamknij)",
-        "drzwi (otworz)",
-        "drzwi (zamknij)",
-        "stopien drzwi",
-        "tryb sterowania drzwiami",
-        "sygnal odjazdu",
-        "reflektor gorny",
-        "reflektor lewy",
-        "reflektor prawy",
-        "przyciemnienie reflektorow",
-        "sygnal lewy",
-        "sygnal prawy",
-        "programator swiatel",
-        "tylny reflektor gorny",
-        "tylny reflektor lewy",
-        "tylny reflektor prawy",
-        "tylny sygnal lewy",
-        "tylny sygnal prawy",
-        "sprezarka",
-        "sprezarka lokalna",
-        "przetwornica",
-        "przetwornica lokalna",
-        "przetwornica",
-        "wylacznik szybki",
-        "radio",
-        "kanal radia",
-        "kanal radia",
-        "kanal radia",
-        "test radiostopu",
-        "radiostop",
-        "zew 3",
-        "pantograf A",
-        "pantograf B",
-        "pantograf A",
-        "pantograf B",
-        "wszystkie pantografy",
-        "wybrany pantograf",
-        "wybrany pantograf",
-        "sprezarka pantografow",
-        "kurek trojdrogowy pantografow",
-        "ogrzewanie pociagu",
-        "sygnalizacja hamowania",
-        "blokada drzwi",
-        "prady drugiego czlonu",
-        "oswietlenie przyrzadow",
-        "oswietlenie pulpitu",
-        "oswietlenie rozkladu jazdy",
-        "oswietlenie kabiny",
-        "przyciemnienie oswietlenia kabiny",
-        "bateria",
-        "element ruchomy",
-        "element ruchomy",
-        "element ruchomy",
-        "element ruchomy",
-        "element ruchomy",
-        "element ruchomy",
-        "element ruchomy",
-        "element ruchomy",
-        "element ruchomy",
-        "element ruchomy"
-      }
-    } );
-
-    auto lookup { stringmap.find( Global.asLang ) };
-    if( lookup == stringmap.end() ) {
-        lookup = stringmap.find( "en" );
-    }
-
-    locale::strings = lookup->second;
-
-    // prepare cab controls translation table
-    {
-        std::vector<std::string> cabcontrols = {
-            "mainctrl:",
-            "jointctrl:",
-            "scndctrl:",
-            "shuntmodepower:",
-            "tempomat_sw:",
-            "dirkey:",
-            "brakectrl:",
-            "localbrake:",
-            "manualbrake:",
-            "alarmchain:",
-            "brakeprofile_sw:",
-            "brakeprofileg_sw:",
-            "brakeprofiler_sw:",
-            "brakeopmode_sw:",
-            "maxcurrent_sw:",
-            "waterpump_sw:",
-            "waterpumpbreaker_sw:",
-            "waterheater_sw:",
-            "waterheaterbreaker_sw:",
-            "watercircuitslink_sw:",
-            "fuelpump_sw:",
-            "oilpump_sw:",
-            "motorblowersfront_sw:",
-            "motorblowersrear_sw:",
-            "motorblowersalloff_sw:",
-            "coolingfans_sw:",
-            "main_off_bt:",
-            "main_on_bt:",
-            "security_reset_bt:",
-            "releaser_bt:",
-            "sand_bt:",
-            "antislip_bt:",
-            "horn_bt:",
-            "hornlow_bt:",
-            "hornhigh_bt:",
-            "whistle_bt:",
-            "fuse_bt:",
-            "converterfuse_bt:",
-            "stlinoff_bt:",
-            "doorleftpermit_sw:",
-            "doorrightpermit_sw:",
-            "doorpermitpreset_sw:",
-            "door_left_sw:",
-            "door_right_sw:",
-            "doorlefton_sw:",
-            "doorrighton_sw:",
-            "doorleftoff_sw:",
-            "doorrightoff_sw:",
-            "doorallon_sw:",
-            "dooralloff_sw:",
-            "doorstep_sw:",
-            "doormode_sw:",
-            "departure_signal_bt:",
-            "upperlight_sw:",
-            "leftlight_sw:",
-            "rightlight_sw:",
-            "dimheadlights_sw:",
-            "leftend_sw:",
-            "rightend_sw:",
-            "lights_sw:",
-            "rearupperlight_sw:",
-            "rearleftlight_sw:",
-            "rearrightlight_sw:",
-            "rearleftend_sw:",
-            "rearrightend_sw:",
-            "compressor_sw:",
-            "compressorlocal_sw:",
-            "converter_sw:",
-            "converterlocal_sw:",
-            "converteroff_sw:",
-            "main_sw:",
-            "radio_sw:",
-            "radiochannel_sw:",
-            "radiochannelprev_sw:",
-            "radiochannelnext_sw:",
-            "radiotest_sw:",
-            "radiostop_sw:",
-            "radiocall3_sw:",
-            "pantfront_sw:",
-            "pantrear_sw:",
-            "pantfrontoff_sw:",
-            "pantrearoff_sw:",
-            "pantalloff_sw:",
-            "pantselected_sw:",
-            "pantselectedoff_sw:",
-            "pantcompressor_sw:",
-            "pantcompressorvalve_sw:",
-            "trainheating_sw:",
-            "signalling_sw:",
-            "door_signalling_sw:",
-            "nextcurrent_sw:",
-            "instrumentlight_sw:",
-            "dashboardlight_sw:",
-            "timetablelight_sw:",
-            "cablight_sw:",
-            "cablightdim_sw:",
-            "battery_sw:",
-            "universal0:",
-            "universal1:",
-            "universal2:",
-            "universal3:",
-            "universal4:",
-            "universal5:",
-            "universal6:",
-            "universal7:",
-            "universal8:",
-            "universal9:"
-        };
-
-        std::size_t stringidx { string::cab_mainctrl };
-        for( auto const &cabcontrol : cabcontrols ) {
-            m_cabcontrols.insert( { cabcontrol, strings[ stringidx++ ] } );
-        }
-    }
+	WriteLog("translation: " + std::to_string(lang_mapping.size()) + " strings loaded");
 }
 
-std::string
-label_cab_control( std::string const &Label ) {
+const std::string& locale::lookup_s(const std::string &msg, bool constant)
+{
+	if (constant) {
+		auto it = pointer_cache.find(&msg);
+		if (it != pointer_cache.end())
+			return *((const std::string*)(it->second));
+	}
 
+	auto it = lang_mapping.find(msg);
+	if (it != lang_mapping.end()) {
+		if (constant)
+			pointer_cache.emplace(&msg, &(it->second));
+		return it->second;
+	}
+
+	if (constant)
+		pointer_cache.emplace(&msg, &msg);
+	return msg;
+}
+
+const char* locale::lookup_c(const char *msg, bool constant)
+{
+	if (constant) {
+		auto it = pointer_cache.find(msg);
+		if (it != pointer_cache.end())
+			return (const char*)(it->second);
+	}
+
+	auto it = lang_mapping.find(std::string(msg));
+	if (it != lang_mapping.end()) {
+		if (constant)
+			pointer_cache.emplace(msg, it->second.c_str());
+		return it->second.c_str();
+	}
+
+	if (constant)
+		pointer_cache.emplace(msg, msg);
+	return msg;
+}
+
+bool locale::parse_translation(std::istream &stream)
+{
+	std::string line;
+
+	std::string msgid;
+	std::string msgstr;
+	std::string msgctxt;
+	char last = 'x';
+
+	while (std::getline(stream, line)) {
+		if (line.size() > 0 && line[0] == '#')
+			continue;
+
+		if (string_starts_with(line, "msgid"))
+			last = 'i';
+		else if (string_starts_with(line, "msgstr"))
+			last = 's';
+		else if (string_starts_with(line, "msgctxt"))
+			last = 'c';
+
+		if (line.size() > 1 && last != 'x') {
+			if (last == 'i')
+				msgid += parse_c_literal(line);
+			else if (last == 's')
+				msgstr += parse_c_literal(line);
+			else if (last == 'c')
+				msgctxt += parse_c_literal(line);
+		}
+		else {
+			if (!msgid.empty() && !msgstr.empty()) {
+				// TODO: context support is incomplete
+				if (!msgctxt.empty())
+					lang_mapping.emplace(msgctxt + "\x1d" + msgid, msgstr);
+				else
+					lang_mapping.emplace(msgid, msgstr);
+			}
+			return true;
+		}
+	}
+
+	return false;
+}
+
+std::string locale::parse_c_literal(const std::string &str)
+{
+	std::istringstream stream(str);
+	std::string out;
+
+	bool active = false;
+	bool escape = false;
+
+	char c;
+	while ((c = stream.get()) != std::char_traits<char>::eof()) {
+		if (!escape && c == '"')
+			active = !active;
+		else if (active && !escape && c == '\\')
+			escape = true;
+		else if (active && escape) {
+			if (c == 'r')
+				out += '\r';
+			else if (c == 'n')
+				out += '\n';
+			else if (c == 't')
+				out += '\t';
+			else if (c == '\\')
+				out += '\\';
+			else if (c == '?')
+				out += '?';
+			else if (c == '\'')
+				out += '\'';
+			else if (c == '"')
+				out += '"';
+			else if (c == 'x') {
+				char n1 = stream.get() - 48;
+				char n2 = stream.get() - 48;
+				if (n1 > 9)
+					n1 -= 7;
+				if (n1 > 16)
+					n1 -= 32;
+				if (n2 > 9)
+					n2 -= 7;
+				if (n2 > 16)
+					n2 -= 32;
+				out += ((n1 << 4) | n2);
+			}
+			escape = false;
+		}
+		else if (active)
+			out += c;
+	}
+
+	return out;
+}
+
+std::string locale::label_cab_control(std::string const &Label)
+{
     if( Label.empty() ) { return ""; }
 
-    auto const lookup = m_cabcontrols.find( Label );
+	static std::unordered_map<std::string, std::string> cabcontrols_labels = {
+	    { "mainctrl:", STRN("master controller") },
+	    { "jointctrl:", STRN("master controller") },
+	    { "scndctrl:", STRN("second controller") },
+	    { "shuntmodepower:", STRN("shunt mode power") },
+	    { "tempomat_sw:", STRN("cruise control") },
+	    { "tempomatoff_sw:", STRN("cruise control") },
+	    { "speedinc_bt:", STRN("cruise control (speed)") },
+	    { "speeddec_bt:", STRN("cruise control (speed)") },
+	    { "speedctrlpowerinc_bt:", STRN("cruise control (power)") },
+	    { "speedctrlpowerdec_bt:", STRN("cruise control (power)") },
+	    { "speedbutton0:", STRN("cruise control (speed)") },
+	    { "speedbutton1:", STRN("cruise control (speed)") },
+	    { "speedbutton2:", STRN("cruise control (speed)") },
+	    { "speedbutton3:", STRN("cruise control (speed)") },
+	    { "speedbutton4:", STRN("cruise control (speed)") },
+	    { "speedbutton5:", STRN("cruise control (speed)") },
+	    { "speedbutton6:", STRN("cruise control (speed)") },
+	    { "speedbutton7:", STRN("cruise control (speed)") },
+	    { "speedbutton8:", STRN("cruise control (speed)") },
+	    { "speedbutton9:", STRN("cruise control (speed)") },
+	    { "distancecounter_sw:", STRN("distance counter") },
+	    { "dirkey:", STRN("reverser") },
+	    { "dirbackward_bt:", STRN("reverser") },
+	    { "dirforward_bt:", STRN("reverser") },
+	    { "dirneutral_bt:", STRN("reverser") },
+	    { "brakectrl:", STRN("train brake") },
+	    { "localbrake:", STRN("independent brake") },
+	    { "manualbrake:", STRN("manual brake") },
+	    { "alarmchain:", STRN("emergency brake") },
+	    { "brakeprofile_sw:", STRN("brake acting speed") },
+	    { "brakeprofileg_sw:", STRN("brake acting speed: cargo") },
+	    { "brakeprofiler_sw:", STRN("brake acting speed: rapid") },
+	    { "brakeopmode_sw", STRN("brake operation mode") },
+	    { "maxcurrent_sw:", STRN("motor overload relay threshold") },
+	    { "waterpump_sw:", STRN("water pump") },
+	    { "waterpumpbreaker_sw:", STRN("water pump breaker") },
+	    { "waterheater_sw:", STRN("water heater") },
+	    { "waterheaterbreaker_sw:", STRN("water heater breaker") },
+	    { "watercircuitslink_sw:", STRN("water circuits link") },
+	    { "fuelpump_sw:", STRN("fuel pump") },
+	    { "oilpump_sw:", STRN("oil pump") },
+	    { "motorblowersfront_sw:", STRN("motor blowers A") },
+	    { "motorblowersrear_sw:", STRN("motor blowers B") },
+	    { "motorblowersalloff_sw:", STRN("all motor blowers") },
+	    { "coolingfans_sw:", STRN("cooling fans") },
+	    { "main_off_bt:", STRN("line breaker") },
+	    { "main_on_bt:", STRN("line breaker") },
+	    { "security_reset_bt:", STRN("alerter") },
+	    { "shp_reset_bt:", STRN("shp") },
+	    { "releaser_bt:", STRN("independent brake releaser") },
+	    { "sand_bt:", STRN("sandbox") },
+	    { "antislip_bt:", STRN("wheelspin brake") },
+	    { "horn_bt:", STRN("horn") },
+	    { "hornlow_bt:", STRN("low tone horn") },
+	    { "hornhigh_bt:", STRN("high tone horn") },
+	    { "whistle_bt:", STRN("whistle") },
+	    { "fuse_bt:", STRN("motor overload relay reset") },
+	    { "converterfuse_bt:", STRN("converter overload relay reset") },
+	    { "stlinoff_bt:", STRN("motor connectors") },
+	    { "doorleftpermit_sw:", STRN("left door (permit)") },
+	    { "doorrightpermit_sw:", STRN("right door (permit)") },
+	    { "doorpermitpreset_sw:", STRN("door (permit)") },
+	    { "door_left_sw:", STRN("left door") },
+	    { "door_right_sw:", STRN("right door") },
+	    { "doorlefton_sw:", STRN("left door (open)") },
+	    { "doorrighton_sw:", STRN("right door (open)") },
+	    { "doorleftoff_sw:", STRN("left door (close)") },
+	    { "doorrightoff_sw:", STRN("right door (close)") },
+	    { "doorallon_sw:", STRN("all doors (open)") },
+	    { "dooralloff_sw:", STRN("all doors (close)") },
+	    { "doorstep_sw:", STRN("doorstep") },
+	    { "doormode_sw", STRN("door control mode") },
+	    { "departure_signal_bt:", STRN("departure signal") },
+	    { "upperlight_sw:", STRN("upper headlight") },
+	    { "leftlight_sw:", STRN("left headlight") },
+	    { "rightlight_sw:", STRN("right headlight") },
+	    { "dimheadlights_sw:", STRN("headlights dimmer") },
+	    { "leftend_sw:", STRN("left marker light") },
+	    { "rightend_sw:", STRN("right marker light") },
+	    { "lights_sw:", STRN("light pattern") },
+	    { "rearupperlight_sw:", STRN("rear upper headlight") },
+	    { "rearleftlight_sw:", STRN("rear left headlight") },
+	    { "rearrightlight_sw:", STRN("rear right headlight") },
+	    { "rearleftend_sw:", STRN("rear left marker light") },
+	    { "rearrightend_sw:", STRN("rear right marker light") },
+	    { "compressor_sw:", STRN("compressor") },
+	    { "compressorlocal_sw:", STRN("local compressor") },
+	    { "converter_sw:", STRN("converter") },
+	    { "converterlocal_sw:", STRN("local converter") },
+	    { "converteroff_sw:", STRN("converter") },
+	    { "main_sw:", STRN("line breaker") },
+	    { "radio_sw:", STRN("radio") },
+	    { "radiochannel_sw:", STRN("radio channel") },
+	    { "radiochannelprev_sw:", STRN("radio channel") },
+	    { "radiochannelnext_sw:", STRN("radio channel") },
+	    { "radiotest_sw:", STRN("radiostop test") },
+	    { "radiostop_sw:", STRN("radiostop") },
+	    { "radiocall3_sw:", STRN("radio call 3") },
+	    { "radiovolume_sw:", STRN("radio volume") },
+	    { "radiovolumenext_sw:", STRN("radio volume") },
+	    { "radiovolumeprev_sw:", STRN("radio volume") },
+	    { "pantfront_sw:", STRN("pantograph A") },
+	    { "pantrear_sw:", STRN("pantograph B") },
+	    { "pantfrontoff_sw:", STRN("pantograph A") },
+	    { "pantrearoff_sw:", STRN("pantograph B") },
+	    { "pantalloff_sw:", STRN("all pantographs") },
+	    { "pantselected_sw:", STRN("selected pantograph") },
+	    { "pantselectedoff_sw:", STRN("selected pantograph") },
+	    { "pantselect_sw:", STRN("selected pantograph") },
+	    { "pantvalves_sw:", STRN("selected pantograph") },
+	    { "pantcompressor_sw:", STRN("pantograph compressor") },
+	    { "pantcompressorvalve_sw:", STRN("pantograph 3 way valve") },
+	    { "trainheating_sw:", STRN("heating") },
+	    { "signalling_sw:", STRN("braking indicator") },
+	    { "door_signalling_sw:", STRN("door locking") },
+	    { "nextcurrent_sw:", STRN("current indicator source") },
+	    { "instrumentlight_sw:", STRN("instrument light") },
+	    { "dashboardlight_sw:", STRN("dashboard light") },
+	    { "timetablelight_sw:", STRN("timetable light") },
+	    { "cablight_sw:", STRN("interior light") },
+	    { "cablightdim_sw:", STRN("interior light dimmer") },
+	    { "compartmentlights_sw:", STRN("compartment lights") },
+	    { "compartmentlightsoff_sw:", STRN("compartment lights") },
+	    { "compartmentlightson_sw:", STRN("compartment lights") },
+	    { "couplingdisconnect_sw:", STRN("coupling") },
+	    { "battery_sw:", STRN("battery") },
+	    { "batteryon_sw:", STRN("battery") },
+	    { "batteryoff_sw:", STRN("battery") },
+	    { "epbrake_bt:", STRN("ep brake") },
+	    { "relayreset1_bt:", STRN("relay reset") },
+	    { "relayreset2_bt:", STRN("relay reset") },
+	    { "relayreset3_bt:", STRN("relay reset") },
+	    { "springbrakeoff_bt:", STRN("spring brake") },
+	    { "springbrakeon_bt:", STRN("spring brake") },
+	    { "springbraketoggle_bt:", STRN("spring brake") },
+	    { "universalbrake1_bt:", STRN("train brake") },
+	    { "universalbrake2_bt:", STRN("train brake") },
+	    { "universalbrake3_bt:", STRN("train brake") },
+	    { "universal0:", STRN("interactive part") },
+	    { "universal1:", STRN("interactive part") },
+	    { "universal2:", STRN("interactive part") },
+	    { "universal3:", STRN("interactive part") },
+	    { "universal4:", STRN("interactive part") },
+	    { "universal5:", STRN("interactive part") },
+	    { "universal6:", STRN("interactive part") },
+	    { "universal7:", STRN("interactive part") },
+	    { "universal8:", STRN("interactive part") },
+	    { "universal9:", STRN("interactive part") }
+	};
+
+	auto const it = cabcontrols_labels.find( Label );
     return (
-        lookup != m_cabcontrols.end() ?
-            lookup->second :
+	    it != cabcontrols_labels.end() ?
+	        lookup_s(it->second) :
             "" );
 }
 
-std::vector<std::string> strings;
+const std::string& locale::coupling_name(int c)
+{
+	static std::unordered_map<coupling, std::string> coupling_names =
+	{
+	    { coupling::faux, STRN("faux") },
+	    { coupling::coupler, STRN("coupler") },
+	    { coupling::brakehose, STRN("brake hose") },
+	    { coupling::control, STRN("control") },
+	    { coupling::highvoltage, STRN("high voltage") },
+	    { coupling::gangway, STRN("gangway") },
+	    { coupling::mainhose, STRN("main hose") },
+	    { coupling::heating, STRN("heating") },
+	    { coupling::permanent, STRN("permanent") },
+        { coupling::power24v, STRN("power 24V") },
+        { coupling::power110v, STRN("power 110V") },
+        { coupling::power3x400v, STRN("power 3x400V") },
+	};
 
-std::unordered_map<std::string, std::string> m_cabcontrols;
+	static std::string unknown(STRN("unknown"));
 
-} // namespace locale
+	auto it = coupling_names.find(static_cast<coupling>(c));
+	if (it != coupling_names.end())
+		return lookup_s(it->second);
+	else
+		return lookup_s(unknown);
+}
 
-//---------------------------------------------------------------------------
+locale Translations;

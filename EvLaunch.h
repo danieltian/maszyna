@@ -30,6 +30,7 @@ public:
 
 // methods
     bool Load( cParser *parser );
+	bool check_activation_key();
     bool check_activation();
     // checks conditions associated with the event. returns: true if the conditions are met
     bool check_conditions();
@@ -47,6 +48,7 @@ public:
     TMemCell *MemCell { nullptr };
     int iCheckMask { 0 };
     double dRadius { 0.0 };
+    bool train_triggered { false };
 
 private:
 // methods

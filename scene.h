@@ -16,13 +16,16 @@ http://mozilla.org/MPL/2.0/.
 #include <unordered_set>
 
 #include "parser.h"
-#include "openglgeometrybank.h"
+#include "geometrybank.h"
 #include "scenenode.h"
 #include "Track.h"
 #include "Traction.h"
 #include "sound.h"
+#include "command.h"
 
 class opengl_renderer;
+class opengl33_renderer;
+
 namespace scene {
 
 int const EU07_CELLSIZE = 250;
@@ -57,6 +60,7 @@ struct scratch_data {
 
     std::string name;
     bool initialized { false };
+	bool time_initialized { false };
 };
 
 // basic element of rudimentary partitioning scheme for the section. fixed size, no further subdivision
@@ -64,6 +68,7 @@ struct scratch_data {
 class basic_cell {
 
     friend opengl_renderer;
+    friend opengl33_renderer;
 
 public:
 // constructors
@@ -150,9 +155,14 @@ public:
     // sets center point of the cell
     void
         center( glm::dvec3 Center );
-    // generates renderable version of held non-instanced geometry in specified geometry bank
+	// generates renderable version of held non-instanced geometry in specified geometry bank
     void
         create_geometry( gfx::geometrybank_handle const &Bank );
+	void
+	    create_map_geometry(std::vector<gfx::basic_vertex> &Bank, const gfx::geometrybank_handle Extra);
+	void
+	    get_map_active_paths(map_colored_paths &handles);
+	glm::vec3 find_nearest_track_point(const glm::dvec3 &pos);
     // provides access to bounding area data
     bounding_area const &
         area() const {
@@ -169,7 +179,7 @@ private:
     using memorycell_sequence = std::vector<TMemCell *>;
 // methods
     void
-        launch_event( TEventLauncher *Launcher );
+	    launch_event(TEventLauncher *Launcher, bool local_only);
     void
         enclose_area( scene::basic_node *Node );
 // members
@@ -192,14 +202,16 @@ private:
     } m_directories;
     // animation of owned items (legacy code, clean up along with track refactoring)
     bool m_geometrycreated { false };
-    unsigned int m_framestamp { 0 }; // id of last rendered gfx frame
+	unsigned int m_framestamp { 0 }; // id of last rendered gfx frame
     TTrack *tTrackAnim = nullptr; // obiekty do przeliczenia animacji
+	command_relay m_relay;
 };
 
 // basic scene partitioning structure, holds terrain geometry and collection of cells
 class basic_section {
 
     friend opengl_renderer;
+    friend opengl33_renderer;
 
 public:
 // constructors
@@ -272,13 +284,21 @@ public:
     // sets center point of the section
     void
         center( glm::dvec3 Center );
-    // generates renderable version of held non-instanced geometry
+	// generates renderable version of held non-instanced geometry
     void
         create_geometry();
+	void
+	    create_map_geometry(const gfx::geometrybank_handle handle);
+	void
+	    get_map_active_paths(map_colored_paths &handles);
     // provides access to bounding area data
     bounding_area const &
         area() const {
             return m_area; }
+
+    const gfx::geometrybank_handle get_map_geometry()
+	    { return m_map_geometryhandle;}
+	glm::vec3 find_nearest_track_point(const glm::dvec3 &point);
 
 private:
 // types
@@ -287,23 +307,27 @@ private:
 // methods
     // provides access to section enclosing specified point
     basic_cell &
-        cell( glm::dvec3 const &Location );
+	    cell(glm::dvec3 const &Location, const glm::ivec2 &offset = glm::ivec2(0));
 // members
     // placement and visibility
+
     scene::bounding_area m_area { glm::dvec3(), static_cast<float>( 0.5 * M_SQRT2 * EU07_SECTIONSIZE ) };
     // content
     cell_array m_cells; // partitioning scheme
     shapenode_sequence m_shapes; // large pieces of opaque geometry and (legacy) terrain
     // TODO: implement dedicated, higher fidelity, fixed resolution terrain mesh item
-    // gfx renderer data
+	// gfx renderer data
     gfx::geometrybank_handle m_geometrybank;
     bool m_geometrycreated { false };
+
+    gfx::geometrybank_handle m_map_geometryhandle;
 };
 
 // top-level of scene spatial structure, holds collection of sections
 class basic_region {
 
     friend opengl_renderer;
+    friend opengl33_renderer;
 
 public:
 // constructors
@@ -387,6 +411,16 @@ public:
     // finds sections inside specified sphere. returns: list of sections
     std::vector<basic_section *> const &
         sections( glm::dvec3 const &Point, float const Radius );
+	void
+	    create_map_geometry();
+	void
+	    update_poi_geometry();
+    basic_section* get_section(size_t section)
+	    { return m_sections[section]; }
+	gfx::geometrybank_handle
+	    get_map_poi_geometry() { return m_map_poipoints; }
+	glm::vec3 find_nearest_track_point(const glm::dvec3 &pos)
+	    { return section(pos).find_nearest_track_point(pos); }
 
 private:
 // types
@@ -397,6 +431,9 @@ private:
         std::vector<basic_section *> sections;
     };
 
+    gfx::geometrybank_handle m_map_geometrybank;
+	gfx::geometrybank_handle m_map_poipoints;
+
 // methods
     // checks whether specified point is within boundaries of the region
     bool
@@ -405,9 +442,9 @@ private:
     static
     bool
         RaTriangleDivider( shape_node &Shape, std::deque<shape_node> &Shapes );
-    // provides access to section enclosing specified point
-    basic_section &
-        section( glm::dvec3 const &Location );
+	// provides access to section enclosing specified point
+	basic_section &
+	    section( glm::dvec3 const &Location );
 
 // members
     section_array m_sections;

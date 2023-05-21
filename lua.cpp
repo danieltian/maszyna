@@ -62,10 +62,16 @@ int lua::openffi(lua_State *s)
     return 1;
 }
 
-#ifdef _WIN32
-#define EXPORT __declspec(dllexport)
+#if defined _WIN32
+#   if defined __GNUC__
+#      define EXPORT __attribute__ ((dllexport))
+#   else
+#      define EXPORT __declspec(dllexport)
+#   endif
+#elif defined __GNUC__
+#   define EXPORT __attribute__ ((visibility ("default")))
 #else
-#define EXPORT
+#   define EXPORT
 #endif
 
 extern "C"
@@ -190,7 +196,7 @@ extern "C"
         if (!mc)
             return;
         mc->UpdateValues(std::string(str), num1, num2,
-                         basic_event::flags::text | basic_event::flags::value_1 | basic_event::flags::value_2);
+                         basic_event::flags::text | basic_event::flags::value1 | basic_event::flags::value2);
     }
 
     EXPORT void scriptapi_dynobj_putvalues(TDynamicObject *dyn, const char *str, double num1, double num2)

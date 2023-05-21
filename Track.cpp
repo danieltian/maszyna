@@ -18,8 +18,10 @@ http://mozilla.org/MPL/2.0/.
 #include "simulation.h"
 #include "Globals.h"
 #include "Event.h"
+#include "MemCell.h"
 #include "messaging.h"
 #include "DynObj.h"
+#include "Driver.h"
 #include "AnimModel.h"
 #include "Track.h"
 #include "Timer.h"
@@ -124,11 +126,11 @@ void TIsolated::Modify(int i, TDynamicObject *o)
         { // jeśli po zmianie nie ma żadnej osi na odcinku izolowanym
             if (evFree)
                 simulation::Events.AddToQuery(evFree, o); // dodanie zwolnienia do kolejki
-            if (Global.iMultiplayer) // jeśli multiplayer
-                multiplayer::WyslijString(asName, 10); // wysłanie pakietu o zwolnieniu
+			if (Global.iMultiplayer) // jeśli multiplayer
+				multiplayer::WyslijString(asName, 10); // wysłanie pakietu o zwolnieniu
             if (pMemCell) // w powiązanej komórce
                 pMemCell->UpdateValues( "", 0, int( pMemCell->Value2() ) & ~0xFF,
-                basic_event::flags::value_2 ); //"zerujemy" ostatnią wartość
+                basic_event::flags::value2 ); //"zerujemy" ostatnią wartość
         }
     }
     else
@@ -138,10 +140,23 @@ void TIsolated::Modify(int i, TDynamicObject *o)
         {
             if (evBusy)
                 simulation::Events.AddToQuery(evBusy, o); // dodanie zajętości do kolejki
-            if (Global.iMultiplayer) // jeśli multiplayer
-                multiplayer::WyslijString(asName, 11); // wysłanie pakietu o zajęciu
+			if (Global.iMultiplayer) // jeśli multiplayer
+			{
+				auto const *owner = (
+					((o->Mechanik != nullptr) && (o->Mechanik->primary())) ?
+					o->Mechanik :
+					o->ctOwner);
+				auto textline = owner != nullptr ? Bezogonkow(owner->TrainName(), true) : "none";
+				if ("none" != textline && Global.bIsolatedTrainName) {
+					textline = ":" + Bezogonkow(owner->TrainName(), true);
+				}
+				else {
+					textline = "";
+				}
+				multiplayer::WyslijString(asName+textline, 11); // wysłanie pakietu o zajęciu
+			}
             if (pMemCell) // w powiązanej komórce
-                pMemCell->UpdateValues( "", 0, int( pMemCell->Value2() ) | 1, basic_event::flags::value_2 ); // zmieniamy ostatnią wartość na nieparzystą
+                pMemCell->UpdateValues( "", 0, int( pMemCell->Value2() ) | 1, basic_event::flags::value2 ); // zmieniamy ostatnią wartość na nieparzystą
         }
     }
 
@@ -468,7 +483,7 @@ void TTrack::Load(cParser *parser, glm::dvec3 const &pOrigin)
         m_material1 = (
             str == "none" ?
                 null_handle :
-                GfxRenderer.Fetch_Material( str ) );
+                GfxRenderer->Fetch_Material( str ) );
         parser->getTokens();
         *parser >> fTexLength; // tex tile length
         if (fTexLength < 0.01)
@@ -478,7 +493,7 @@ void TTrack::Load(cParser *parser, glm::dvec3 const &pOrigin)
         m_material2 = (
             str == "none" ?
                 null_handle :
-                GfxRenderer.Fetch_Material( str ) );
+                GfxRenderer->Fetch_Material( str ) );
         parser->getTokens(3);
         *parser
             >> fTexHeight1
@@ -590,17 +605,14 @@ void TTrack::Load(cParser *parser, glm::dvec3 const &pOrigin)
         else if (iCategoryFlag & 2)
             if (m_material1 && fTexLength)
             { // dla drogi trzeba ustalić proporcje boków nawierzchni
-                float w, h;
-                GfxRenderer.Bind_Material(m_material1);
-                glGetTexLevelParameterfv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
-                glGetTexLevelParameterfv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
-                if (h != 0.0)
-                    fTexRatio1 = w / h; // proporcja boków
-                GfxRenderer.Bind_Material(m_material2);
-                glGetTexLevelParameterfv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
-                glGetTexLevelParameterfv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
-                if (h != 0.0)
-                    fTexRatio2 = w / h; // proporcja boków
+                auto const &texture1 { GfxRenderer->Texture( GfxRenderer->Material( m_material1 ).textures[0] ) };
+                if( texture1.height() > 0 ) {
+                    fTexRatio1 = static_cast<float>( texture1.width() ) / static_cast<float>( texture1.height() ); // proporcja boków
+                }
+                auto const &texture2 { GfxRenderer->Texture( GfxRenderer->Material( m_material2 ).textures[0] ) };
+                if( texture2.height() > 0 ) {
+                    fTexRatio2 = static_cast<float>( texture2.width() ) / static_cast<float>( texture2.height() ); // proporcja boków
+                }
             }
         break;
     }
@@ -841,7 +853,7 @@ void TTrack::Load(cParser *parser, glm::dvec3 const &pOrigin)
         { // obwód izolowany, do którego tor należy
             parser->getTokens();
             *parser >> token;
-            pIsolated = TIsolated::Find(token);
+            Isolated.push_back(TIsolated::Find(token));
         }
         else if (str == "angle1")
         { // kąt ścięcia końca od strony 1
@@ -889,7 +901,7 @@ void TTrack::Load(cParser *parser, glm::dvec3 const &pOrigin)
             // switch trackbed texture
             auto const trackbedtexture { parser->getToken<std::string>() };
             if( eType == tt_Switch ) {
-                SwitchExtension->m_material3 = GfxRenderer.Fetch_Material( trackbedtexture );
+                SwitchExtension->m_material3 = GfxRenderer->Fetch_Material( trackbedtexture );
             }
         }
         else if( str == "railprofile" ) {
@@ -899,6 +911,10 @@ void TTrack::Load(cParser *parser, glm::dvec3 const &pOrigin)
                 m_profile1 = fetch_track_rail_profile( railprofile );
             }
         }
+        else if( str == "friction" ) {
+            // memory cell holding friction value modifiers
+            m_friction.first = parser->getToken<std::string>();
+        }
         else
             ErrorLog("Bad track: unknown property: \"" + str + "\" defined for track \"" + m_name + "\"");
         parser->getTokens();
@@ -906,13 +922,11 @@ void TTrack::Load(cParser *parser, glm::dvec3 const &pOrigin)
 		str = token;
     }
     // alternatywny zapis nazwy odcinka izolowanego - po znaku "@" w nazwie toru
-    if (!pIsolated)
-        if ((i = m_name.find("@")) != std::string::npos)
-            if (i < m_name.length()) // nie może być puste
-            {
-                pIsolated = TIsolated::Find(m_name.substr(i + 1, m_name.length()));
-                m_name = m_name.substr(0, i - 1); // usunięcie z nazwy
-            }
+    if ((i = m_name.find("@")) != std::string::npos && i < m_name.length())
+    {
+        Isolated.push_back(TIsolated::Find(m_name.substr(i + 1, m_name.length())));
+        m_name = m_name.substr(0, i - 1); // usunięcie z nazwy
+    }
 
     // calculate path location
     location( (
@@ -994,11 +1008,11 @@ void TTrack::QueueEvents( event_sequence const &Events, TDynamicObject const *Ow
     }
 }
 
-std::string TTrack::IsolatedName()
+std::string TTrack::RemoteIsolatedName()
 { // podaje nazwę odcinka izolowanego, jesli nie ma on jeszcze przypisanych zdarzeń
-    if (pIsolated)
-        if (!pIsolated->evBusy && !pIsolated->evFree)
-            return pIsolated->asName;
+    for (const TIsolated *iso : Isolated)
+        if (!iso->evBusy && !iso->evFree)
+            return iso->asName;
     return "";
 };
 
@@ -1095,7 +1109,7 @@ bool TTrack::InMovement()
                 if (!SwitchExtension->CurrentIndex)
                     return false; // 0=zablokowana się nie animuje
                 // trzeba każdorazowo porównywać z kątem modelu
-                TAnimContainer *ac = (
+				auto ac = (
                     SwitchExtension->pModel ?
                         SwitchExtension->pModel->GetContainer() :
                         nullptr );
@@ -1122,6 +1136,171 @@ void TTrack::RaAssign( TAnimModel *am, basic_event *done, basic_event *joined )
     }
 };
 
+void TTrack::create_map_geometry(std::vector<gfx::basic_vertex> &Bank, const gfx::geometrybank_handle Extra)
+{
+    if (iCategoryFlag != 1)
+        return; // only tracks for now
+
+	switch (eType)
+	{
+	case tt_Normal: {
+		std::vector<gfx::basic_vertex> vertices;
+		Segment->render_lines(vertices, 0.5f);
+
+        std::copy(vertices.begin(), vertices.end(), std::back_inserter(Bank));
+        extra_map_geometry = GfxRenderer->Insert(vertices, Extra, GL_LINES);
+
+		break;
+	}
+	case tt_Switch: {
+		std::vector<gfx::basic_vertex> vertices;
+
+		SwitchExtension->Segments[0]->render_lines(vertices, 0.5f);
+        std::copy(vertices.begin(), vertices.end(), std::back_inserter(Bank));
+        SwitchExtension->map_geometry[0] = GfxRenderer->Insert(vertices, Extra, GL_LINES);
+
+		vertices.clear();
+		SwitchExtension->Segments[1]->render_lines(vertices, 0.5f);
+        std::copy(vertices.begin(), vertices.end(), std::back_inserter(Bank));
+        SwitchExtension->map_geometry[1] = GfxRenderer->Insert(vertices, Extra, GL_LINES);
+		break;
+	}
+	default:
+		break;
+	}
+}
+
+TTrack *TTrack::Next(TTrack *visitor) {
+	if (eType == tt_Normal) {
+		if (trNext != visitor)
+			return trNext;
+		else
+			return trPrev;
+	} else if (eType == tt_Switch) {
+		int state = GetSwitchState();
+
+		if (SwitchExtension->pPrevs[0] == visitor
+		        || SwitchExtension->pPrevs[1] == visitor)
+		{
+			// we came from 'previous' side
+			return SwitchExtension->pNexts[state];
+		}
+
+		if (SwitchExtension->pNexts[0] == visitor
+		        || SwitchExtension->pNexts[1] == visitor)
+		{
+			// we came from 'next' side
+			return SwitchExtension->pPrevs[state];
+		}
+	}
+	return nullptr;
+}
+
+double TTrack::ActiveLength() {
+	if (eType == tt_Normal) {
+		return Segment->GetLength();
+	} else if (eType == tt_Switch) {
+		if (GetSwitchState() == 0)
+			return SwitchExtension->Segments[0]->GetLength();
+		else
+			return SwitchExtension->Segments[1]->GetLength();
+	}
+	return 1.0f;
+}
+
+void TTrack::get_map_active_paths(map_colored_paths &handles)
+{
+	if (iCategoryFlag != 1)
+		return;
+
+	if (eType == tt_Switch) {
+		if (GetSwitchState() == 0)
+			handles.switches.push_back(SwitchExtension->map_geometry[0]);
+		else
+			handles.switches.push_back(SwitchExtension->map_geometry[1]);
+	}
+}
+
+void TTrack::get_map_paths_for_state(map_colored_paths &handles, int state)
+{
+    if (iCategoryFlag != 1 || eType != tt_Switch)
+        return;
+
+    handles.highlighted.push_back(SwitchExtension->map_geometry[state]);
+}
+
+void TTrack::get_map_future_paths(map_colored_paths &handles) {
+	if (iCategoryFlag != 1)
+		return;
+
+	if (!Dynamics.empty()) {
+		if (eType == tt_Switch) {
+			if (GetSwitchState() == 0)
+				handles.occupied.push_back(SwitchExtension->map_geometry[0]);
+			else
+				handles.occupied.push_back(SwitchExtension->map_geometry[1]);
+		} else if (eType == tt_Normal) {
+			handles.occupied.push_back(extra_map_geometry);
+		}
+
+		static int stamp = 0;
+		stamp++;
+
+		float distance = Global.map_highlight_distance;
+		TTrack *track = trPrev;
+		TTrack *visitor = this;
+
+		while (distance > 0.0f && track && track->iterate_stamp != stamp) {
+			handles.future.push_back(track->extra_map_geometry);
+			track->iterate_stamp = stamp;
+			distance -= track->ActiveLength();
+
+			TTrack *tmp = track;
+			track = track->Next(visitor);
+			visitor = tmp;
+		}
+
+		distance = Global.map_highlight_distance;
+		stamp++;
+		track = trNext;
+		visitor = this;
+
+		while (distance > 0.0f && track && track->iterate_stamp != stamp) {
+			handles.future.push_back(track->extra_map_geometry);
+			track->iterate_stamp = stamp;
+			distance -= track->ActiveLength();
+
+			TTrack *tmp = track;
+			track = track->Next(visitor);
+			visitor = tmp;
+		}
+	}
+}
+
+glm::vec3 TTrack::get_nearest_point(const glm::dvec3 &point) const
+{
+	if (eType == tt_Normal) {
+		return Segment->get_nearest_point(point);
+	}
+	else if (eType == tt_Switch) {
+		glm::vec3 nearest;
+		float min = std::numeric_limits<float>::max();
+
+		for (size_t i = 0; i < 2; i++) {
+			glm::dvec3 p = SwitchExtension->Segments[i]->get_nearest_point(point);
+			float dist2 = glm::distance2(p, point);
+			if  (dist2 < min) {
+				nearest = p;
+				min = dist2;
+			}
+		}
+
+		return nearest;
+	}
+
+	return glm::vec3(NAN);
+}
+
 // wypełnianie tablic VBO
 void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
 
@@ -1144,11 +1323,11 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                 gfx::vertex_array vertices;
                 Segment->RenderLoft(vertices, m_origin, bpts1, iTrapezoid > 0, texturelength);
                 if( ( Bank != 0 ) && ( true == Geometry2.empty() ) ) {
-                    Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                    Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                 }
                 if( ( Bank == 0 ) && ( false == Geometry2.empty() ) ) {
                     // special variant, replace existing data for a turntable track
-                    GfxRenderer.Replace( vertices, Geometry2[ 0 ] );
+                    GfxRenderer->Replace( vertices, Geometry2[ 0 ], GL_TRIANGLE_STRIP );
                 }
             }
             if (m_material1)
@@ -1158,18 +1337,18 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                 gfx::vertex_array vertices;
                 if( ( Bank != 0 ) && ( true == Geometry1.empty() ) ) {
                     Segment->RenderLoft( vertices, m_origin, rpts1, iTrapezoid > 0, texturelength );
-                    Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                    Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                     vertices.clear(); // reuse the scratchpad
                     Segment->RenderLoft( vertices, m_origin, rpts2, iTrapezoid > 0, texturelength );
-                    Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                    Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                 }
                 if( ( Bank == 0 ) && ( false == Geometry1.empty() ) ) {
                     // special variant, replace existing data for a turntable track
                     Segment->RenderLoft( vertices, m_origin, rpts1, iTrapezoid > 0, texturelength );
-                    GfxRenderer.Replace( vertices, Geometry1[ 0 ] );
+                    GfxRenderer->Replace( vertices, Geometry1[ 0 ], GL_TRIANGLE_STRIP );
                     vertices.clear(); // reuse the scratchpad
                     Segment->RenderLoft( vertices, m_origin, rpts2, iTrapezoid > 0, texturelength );
-                    GfxRenderer.Replace( vertices, Geometry1[ 1 ] );
+                    GfxRenderer->Replace( vertices, Geometry1[ 1 ], GL_TRIANGLE_STRIP );
                 }
             }
             break;
@@ -1194,21 +1373,21 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                         // composed from two parts: transition from blade to regular rail, and regular rail
                         SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts3, true, texturelength, 1.0, 0, bladelength / 2, { SwitchExtension->fOffset2, SwitchExtension->fOffset2 / 2 } );
                         SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts1, false, texturelength, 1.0, bladelength / 2, bladelength, { SwitchExtension->fOffset2 / 2, 0.f } );
-                        Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                         // fixed parts
                         SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts1, false, texturelength, 1.0, bladelength );
-                        Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                         if( jointlength > 0 ) {
                             // part of the diverging rail touched by wheels of vehicle going straight
                             SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts1, false, texturelength, 1.0, 0, jointlength );
-                            Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                            Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                             vertices.clear();
                         }
                         // other rail, full length
                         SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts2, false, texturelength );
-                        Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                     }
                     if( m_material2 ) {
@@ -1217,15 +1396,15 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                         // composed from two parts: transition from blade to regular rail, and regular rail
                         SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts4, true, texturelength, 1.0, 0, bladelength / 2, { -fMaxOffset + SwitchExtension->fOffset1, ( -fMaxOffset + SwitchExtension->fOffset1 ) / 2 } );
                         SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts2, false, texturelength, 1.0, bladelength / 2, bladelength, { ( -fMaxOffset + SwitchExtension->fOffset1 ) / 2, 0.f } );
-                        Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                         // fixed parts
                         SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts2, false, texturelength, 1.0, bladelength );
-                        Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                         // diverging rail, potentially minus part touched by wheels of vehicle going straight
                         SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts1, false, texturelength, 1.0, jointlength );
-                        Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                     }
                 }
@@ -1238,22 +1417,22 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                         // composed from two parts: transition from blade to regular rail, and regular rail
                         SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts4, true, texturelength, 1.0, 0, bladelength / 2, { -SwitchExtension->fOffset2, -SwitchExtension->fOffset2 / 2 } );
                         SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts2, false, texturelength, 1.0, bladelength / 2, bladelength, { -SwitchExtension->fOffset2 / 2, 0.f } );
-                        Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                         // fixed parts
                         // prawa szyna za iglicą
                         SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts2, false, texturelength, 1.0, bladelength );
-                        Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                         if( jointlength > 0 ) {
                             // part of the diverging rail touched by wheels of vehicle going straight
                             SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts2, false, texturelength, 1.0, 0, jointlength );
-                            Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                            Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                             vertices.clear();
                         }
                         // other rail, full length
                         SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts1, false, texturelength );
-                        Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                     }
                     if( m_material2 ) {
@@ -1262,16 +1441,16 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                         // composed from two parts: transition from blade to regular rail, and regular rail
                         SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts3, true, texturelength, 1.0, 0, bladelength / 2, { fMaxOffset - SwitchExtension->fOffset1, ( fMaxOffset - SwitchExtension->fOffset1 ) / 2 } );
                         SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts1, false, texturelength, 1.0, bladelength / 2, bladelength, { ( fMaxOffset - SwitchExtension->fOffset1 ) / 2, 0.f } );
-                        Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                         // fixed parts
                         // lewa szyna za iglicą
                         SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts1, false, texturelength, 1.0, bladelength );
-                        Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                         // diverging rail, potentially minus part touched by wheels of vehicle going straight
                         SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts2, false, texturelength, 1.0, jointlength );
-                        Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                        Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                         vertices.clear();
                     }
                 }
@@ -1280,7 +1459,7 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
             if( true == Global.CreateSwitchTrackbeds ) {
                 gfx::vertex_array vertices;
                 create_switch_trackbed( vertices );
-                SwitchExtension->Geometry3 = GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP );
+                SwitchExtension->Geometry3 = GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP );
                 vertices.clear();
             }
 
@@ -1303,7 +1482,7 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                 auto const texturelength { texture_length( m_material1 ) };
                 gfx::vertex_array vertices;
                 Segment->RenderLoft(vertices, m_origin, bpts1, iTrapezoid > 0, texturelength);
-                Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
             }
             if (m_material2)
             { // pobocze drogi - poziome przy przechyłce (a może krawężnik i chodnik zrobić jak w Midtown Madness 2?)
@@ -1316,13 +1495,13 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                 if( ( fTexHeight1 >= 0.0 ) || ( slop != 0.0 ) ) {
                     // tylko jeśli jest z prawej
                     Segment->RenderLoft( vertices, m_origin, rpts1, iTrapezoid > 0, texturelength );
-                    Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                    Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                     vertices.clear();
                 }
                 if( ( fTexHeight1 >= 0.0 ) || ( side != 0.0 ) ) {
                     // tylko jeśli jest z lewej
                     Segment->RenderLoft( vertices, m_origin, rpts2, iTrapezoid > 0, texturelength );
-                    Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                    Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                     vertices.clear();
                 }
             }
@@ -1399,22 +1578,22 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                     if( ( fTexHeight1 >= 0.0 ) || ( side != 0.0 ) ) {
                         SwitchExtension->Segments[ 2 ]->RenderLoft( vertices, m_origin, rpts2, true, texturelength, 1.0, 0, 0, {}, &b, render );
                         if( true == render ) {
-                            Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                            Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                             vertices.clear();
                         }
                         SwitchExtension->Segments[ 3 ]->RenderLoft( vertices, m_origin, rpts2, true, texturelength, 1.0, 0, 0, {}, &b, render );
                         if( true == render ) {
-                            Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                            Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                             vertices.clear();
                         }
                         SwitchExtension->Segments[ 4 ]->RenderLoft( vertices, m_origin, rpts2, true, texturelength, 1.0, 0, 0, {}, &b, render );
                         if( true == render ) {
-                            Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                            Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                             vertices.clear();
                         }
                         SwitchExtension->Segments[ 5 ]->RenderLoft( vertices, m_origin, rpts2, true, texturelength, 1.0, 0, 0, {}, &b, render );
                         if( true == render ) {
-                            Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                            Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                             vertices.clear();
                         }
                     }
@@ -1424,17 +1603,17 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                     if( ( fTexHeight1 >= 0.0 ) || ( side != 0.0 ) ) {
                         SwitchExtension->Segments[ 2 ]->RenderLoft( vertices, m_origin, rpts2, true, texturelength, 1.0, 0, 0, {}, &b, render ); // z P2 do P4
                         if( true == render ) {
-                            Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                            Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                             vertices.clear();
                         }
                         SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts2, true, texturelength, 1.0, 0, 0, {}, &b, render ); // z P4 do P3=P1 (odwrócony)
                         if( true == render ) {
-                            Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                            Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                             vertices.clear();
                         }
                         SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts2, true, texturelength, 1.0, 0, 0, {}, &b, render ); // z P1 do P2
                         if( true == render ) {
-                            Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                            Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                             vertices.clear();
                         }
                     }
@@ -1489,7 +1668,7 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                              cosa0 * u + sina0 * v + 0.5,
                             -sina0 * u + cosa0 * v + 0.5 } );
                 }
-                Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_FAN ) );
+                Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_FAN ) );
             }
             break;
         } // tt_cross
@@ -1508,7 +1687,7 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
             { // tworzenie trójkątów nawierzchni szosy
                 gfx::vertex_array vertices;
                 Segment->RenderLoft(vertices, m_origin, bpts1, iTrapezoid > 0, fTexLength);
-                Geometry1.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                Geometry1.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
             }
             if (m_material2)
             { // pobocze drogi - poziome przy przechyłce (a może krawężnik i chodnik zrobić jak w Midtown Madness 2?)
@@ -1516,10 +1695,10 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                 create_road_side_profile( rpts1, rpts2, bpts1 );
                 gfx::vertex_array vertices;
                 Segment->RenderLoft( vertices, m_origin, rpts1, iTrapezoid > 0, fTexLength );
-                Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                 vertices.clear();
                 Segment->RenderLoft( vertices, m_origin, rpts2, iTrapezoid > 0, fTexLength );
-                Geometry2.emplace_back( GfxRenderer.Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
+                Geometry2.emplace_back( GfxRenderer->Insert( vertices, Bank, GL_TRIANGLE_STRIP ) );
                 vertices.clear();
             }
         }
@@ -1797,7 +1976,7 @@ TTrack * TTrack::RaAnimate()
                     // composed from two parts: transition from blade to regular rail, and regular rail
                     SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts3, true, texturelength, 1.0, 0, bladelength / 2, { SwitchExtension->fOffset2, SwitchExtension->fOffset2 / 2 } );
                     SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts1, false, texturelength, 1.0, bladelength / 2, bladelength, { SwitchExtension->fOffset2 / 2, 0.f } );
-                    GfxRenderer.Replace( vertices, Geometry1[ 0 ] );
+                    GfxRenderer->Replace( vertices, Geometry1[ 0 ], GL_TRIANGLE_STRIP );
                     vertices.clear();
                 }
                 if( m_material2 ) {
@@ -1806,7 +1985,7 @@ TTrack * TTrack::RaAnimate()
                     // composed from two parts: transition from blade to regular rail, and regular rail
                     SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts4, true, texturelength, 1.0, 0, bladelength / 2, { -fMaxOffset + SwitchExtension->fOffset1, ( -fMaxOffset + SwitchExtension->fOffset1 ) / 2 } );
                     SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts2, false, texturelength, 1.0, bladelength / 2, bladelength, { ( -fMaxOffset + SwitchExtension->fOffset1 ) / 2, 0.f } );
-                    GfxRenderer.Replace( vertices, Geometry2[ 0 ] );
+                    GfxRenderer->Replace( vertices, Geometry2[ 0 ], GL_TRIANGLE_STRIP );
                     vertices.clear();
                 }
             }
@@ -1817,7 +1996,7 @@ TTrack * TTrack::RaAnimate()
                     // composed from two parts: transition from blade to regular rail, and regular rail
                     SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts4, true, texturelength, 1.0, 0, bladelength / 2, { -SwitchExtension->fOffset2, -SwitchExtension->fOffset2 / 2 } );
                     SwitchExtension->Segments[ 0 ]->RenderLoft( vertices, m_origin, rpts2, false, texturelength, 1.0, bladelength / 2, bladelength, { -SwitchExtension->fOffset2 / 2, 0.f } );
-                    GfxRenderer.Replace( vertices, Geometry1[ 0 ] );
+                    GfxRenderer->Replace( vertices, Geometry1[ 0 ], GL_TRIANGLE_STRIP );
                     vertices.clear();
                 }
                 if( m_material2 ) {
@@ -1826,7 +2005,7 @@ TTrack * TTrack::RaAnimate()
                     // composed from two parts: transition from blade to regular rail, and regular rail
                     SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts3, true, texturelength, 1.0, 0, bladelength / 2, { fMaxOffset - SwitchExtension->fOffset1, ( fMaxOffset - SwitchExtension->fOffset1 ) / 2 } );
                     SwitchExtension->Segments[ 1 ]->RenderLoft( vertices, m_origin, rpts1, false, texturelength, 1.0, bladelength / 2, bladelength, { ( fMaxOffset - SwitchExtension->fOffset1 ) / 2, 0.f } );
-                    GfxRenderer.Replace( vertices, Geometry2[ 0 ] );
+                    GfxRenderer->Replace( vertices, Geometry2[ 0 ], GL_TRIANGLE_STRIP );
                     vertices.clear();
                 }
             }
@@ -1838,7 +2017,7 @@ TTrack * TTrack::RaAnimate()
             SwitchExtension->CurrentIndex) // 0=zablokowana się nie animuje
         { // trzeba każdorazowo porównywać z kątem modelu
             // //pobranie kąta z modelu
-            TAnimContainer *ac = (
+			auto ac = (
                 SwitchExtension->pModel ?
                     SwitchExtension->pModel->GetContainer() : // pobranie głównego submodelu
                     nullptr );
@@ -2077,7 +2256,7 @@ TTrack::export_as_text_( std::ostream &Output ) const {
         // texture parameters are supplied only if the path is set as visible
         auto texturefile { (
             m_material1 != null_handle ?
-                GfxRenderer.Material( m_material1 ).name :
+                GfxRenderer->Material( m_material1 ).name :
                 "none" ) };
         if( texturefile.find( szTexturePath ) == 0 ) {
             // don't include 'textures/' in the path
@@ -2089,7 +2268,7 @@ TTrack::export_as_text_( std::ostream &Output ) const {
 
         texturefile = (
             m_material2 != null_handle ?
-                GfxRenderer.Material( m_material2 ).name :
+                GfxRenderer->Material( m_material2 ).name :
                 "none" );
         if( texturefile.find( szTexturePath ) == 0 ) {
             // don't include 'textures/' in the path
@@ -2152,8 +2331,8 @@ TTrack::export_as_text_( std::ostream &Output ) const {
             Output << "velocity " << fVelocity << ' ';
         }
     }
-    if( pIsolated ) {
-        Output << "isolated " << pIsolated->asName << ' ';
+    for( const TIsolated *iso : Isolated ) {
+        Output << "isolated " << iso->asName << ' ';
     }
     if( fOverhead != -1.0 ) {
         Output << "overhead " << fOverhead << ' ';
@@ -2163,12 +2342,15 @@ TTrack::export_as_text_( std::ostream &Output ) const {
     }
     if( ( eType == tt_Switch )
      && ( SwitchExtension->m_material3 != null_handle ) ) {
-        auto texturefile { GfxRenderer.Material( m_material2 ).name };
+        auto texturefile { GfxRenderer->Material( m_material2 ).name };
         if( texturefile.find( szTexturePath ) == 0 ) {
             // don't include 'textures/' in the path
             texturefile.erase( 0, std::string{ szTexturePath }.size() );
         }
         Output << "trackbed " << texturefile << ' ';
+    }
+    if( false == m_friction.first.empty() ) {
+        Output << "friction " << m_friction.first << ' ';
     }
     // footer
     Output
@@ -2283,7 +2465,7 @@ TTrack::texture_length( material_handle const Material ) {
     if( Material == null_handle ) {
         return fTexLength;
     }
-    auto const texturelength { GfxRenderer.Material( Material ).size.y };
+    auto const texturelength { GfxRenderer->Material( Material ).size.y };
     return (
         texturelength < 0.f ?
             fTexLength :
@@ -2320,6 +2502,16 @@ double TTrack::VelocityGet()
 { // pobranie dozwolonej prędkości podczas skanowania
     return ((iDamageFlag & 128) ? 0.0 : fVelocity); // tor uszkodzony = prędkość zerowa
 };
+
+float TTrack::Friction() const {
+
+    if( m_friction.second == nullptr ) {
+        return fFriction;
+    }
+    else {
+        return clamp( fFriction * m_friction.second->Value1() + m_friction.second->Value2(), 0.0, 1.0 );
+    }
+}
 
 void TTrack::ConnectionsLog()
 { // wypisanie informacji o połączeniach
@@ -3305,6 +3497,17 @@ path_table::InitTracks() {
             // możliwy portal, jeśli nie podłączony od strony 1
             // ustawienie flagi portalu
             track->iCategoryFlag |= 0x100;
+        }
+
+        {
+            auto const inputcellname { track->m_friction.first };
+
+            if( false == inputcellname.empty() ) {
+                track->m_friction.second = simulation::Memory.find( inputcellname );
+                if( track->m_friction.second == nullptr ) {
+                    ErrorLog( "Bad track: " + ( trackname.empty() ? "unnamed track" : "\"" + trackname + "\"" ) + " can't find assigned memory cell \"" + inputcellname + "\"" );
+                }
+            }
         }
     }
 

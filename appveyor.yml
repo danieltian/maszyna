@@ -3,19 +3,47 @@ image: Visual Studio 2017
 clone_depth: 1
 build_script:
 - ps: >-
-    mkdir builds
+    cd ref
     
-    cd builds
+    git clone "https://github.com/chriskohlhoff/asio" --depth 1 --branch asio-1-16-1 -q
+    
+    curl -o crashpad86.zip "http://get.backtrace.io/crashpad/builds/release/x86/crashpad-2020-07-01-release-x86-558c9614e3819179f30b92541450f5ac643afce5.zip"
+    
+    7z x crashpad86.zip
+    
+    move crashpad-2020-07-01-release-x86-558c9614e3819179f30b92541450f5ac643afce5 crashpad
+    
+    cd ..
+    
+    mkdir build
+    
+    cd build
     
     mkdir x86
     
     cd x86
     
-    cmake ../.. -T v141_xp
+    cmake ../.. -T v141_xp -DWITH_CRASHPAD=ON
     
     cmake --build . --config RelWithDebInfo
     
     cd ..
+    
+    cd ..
+    
+    cd ref
+    
+    move crashpad crashpad_
+    
+    curl -o crashpad64.zip "http://get.backtrace.io/crashpad/builds/release/x86-64/crashpad-2020-07-01-release-x64-558c9614e3819179f30b92541450f5ac643afce5.zip"
+    
+    7z x crashpad64.zip
+    
+    move crashpad-2020-07-01-release-x64-558c9614e3819179f30b92541450f5ac643afce5 crashpad
+    
+    cd ..
+    
+    cd build
     
     mkdir x64
     
@@ -29,19 +57,15 @@ build_script:
     
     7z a eu07_x86_bin.zip ./x86/bin/RelWithDebInfo/*.exe
     
-    7z a eu07_x86_pdb.zip ./x86/pdb/RelWithDebInfo/*.pdb
-    
     7z a eu07_x64_bin.zip ./x64/bin/RelWithDebInfo/*.exe
     
-    7z a eu07_x64_pdb.zip ./x64/pdb/RelWithDebInfo/*.pdb
 test: off
 deploy: off
 artifacts:
-- path: builds/eu07_x86_bin.zip
+- path: build/eu07_x86_bin.zip
   name: binaries_x86
-- path: builds/eu07_x64_bin.zip
+- path: build/eu07_x64_bin.zip
   name: binaries_x64
-- path: builds/eu07_x86_pdb.zip
-  name: symbols_x86
-- path: builds/eu07_x64_pdb.zip
-  name: symbols_x64
+- path: shaders
+  name: shaders
+  type: zip

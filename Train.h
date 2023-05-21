@@ -11,17 +11,18 @@ http://mozilla.org/MPL/2.0/.
 
 #include <string>
 #include "DynObj.h"
+#include "Driver.h"
 #include "Button.h"
 #include "Gauge.h"
 #include "sound.h"
 #include "PyInt.h"
 #include "command.h"
+#include "pythonscreenviewer.h"
+#include "dictionary.h"
 
 #undef snprintf // pyint.h->python
 
 // typedef enum {st_Off, st_Starting, st_On, st_ShuttingDown} T4State;
-
-const int maxcab = 2;
 
 const double fCzuwakBlink = 0.15;
 const float fConverterPrzekaznik = 1.5f; // hunter-261211: do przekaznika nadmiarowego przetwornicy
@@ -60,13 +61,17 @@ private:
 class control_mapper {
     typedef std::unordered_map< TSubModel const *, std::string> submodelstring_map;
     submodelstring_map m_controlnames;
+    using stringset = std::unordered_set<std::string>;
+    stringset m_names; // names of registered controls
 public:
     void
-        clear() { m_controlnames.clear(); }
+        clear();
     void
         insert( TGauge const &Gauge, std::string const &Label );
     std::string
         find( TSubModel const *Control ) const;
+    bool
+        contains( std::string const Control ) const;
 };
 
 class TTrain {
@@ -81,6 +86,7 @@ class TTrain {
         std::uint8_t radio_stop;
         std::uint8_t motor_resistors;
         std::uint8_t line_breaker;
+        std::uint8_t ground_relay;
         std::uint8_t motor_overload;
         std::uint8_t motor_connectors;
         std::uint8_t wheelslip;
@@ -99,10 +105,44 @@ class TTrain {
         float reservoir_pressure;
         float pipe_pressure;
         float brake_pressure;
+        float pantograph_pressure;
         float hv_voltage;
         std::array<float, 3> hv_current;
         float lv_voltage;
+		double distance;
+		std::uint8_t radio_channel;
+		std::uint8_t springbrake_active;
+        std::uint8_t epbrake_enabled;
+		std::uint8_t dir_forward;
+		std::uint8_t dir_backward;
+		std::uint8_t doorleftallowed;
+		std::uint8_t doorleftopened;
+		std::uint8_t doorrightallowed;
+		std::uint8_t doorrightopened;
+		std::uint8_t doorstepallowed;
+		std::uint8_t battery;
+		std::uint8_t emergencybrake;
+		std::uint8_t lockpipe;
+		bool radiomessageindicator;
     };
+
+    struct screen_entry {
+
+        std::string script;
+        std::string target;
+		double updatetime = 0;
+		double updatetimecounter = 0;
+        std::shared_ptr<python_rt> rt;
+        std::shared_ptr<python_screen_viewer> viewer;
+        std::shared_ptr<std::vector<glm::vec2>> touch_list;
+
+        dictionary_source parameters; // cached pre-processed optional per-screen parameters
+
+        void deserialize( cParser &Input );
+        bool deserialize_mapping( cParser &Input );
+    };
+
+	typedef std::vector<screen_entry> screenentry_sequence;
 
 // methods
     bool CabChange(int iDirection);
@@ -113,16 +153,26 @@ class TTrain {
     // McZapkie-010302
     bool Init(TDynamicObject *NewDynamicObject, bool e3d = false);
 
-    inline Math3D::vector3 GetDirection() { return DynamicObject->VectorFront(); };
-    inline Math3D::vector3 GetUp() { return DynamicObject->VectorUp(); };
-    inline std::string GetLabel( TSubModel const *Control ) const { return m_controlmapper.find( Control ); }
+    inline
+    Math3D::vector3 GetDirection() const {
+        return DynamicObject->VectorFront(); };
+    inline
+    Math3D::vector3 GetUp() const {
+        return DynamicObject->VectorUp(); };
+    inline
+    std::string GetLabel( TSubModel const *Control ) const {
+        return m_controlmapper.find( Control ); }
     void UpdateCab();
     bool Update( double const Deltatime );
-    void SetLights();
+    void add_distance( double const Distance );
     // McZapkie-310302: ladowanie parametrow z pliku
     bool LoadMMediaFile(std::string const &asFileName);
-    dictionary_source *GetTrainState();
+    dictionary_source *GetTrainState( dictionary_source const &Extraparameters );
     state_t get_state() const;
+    // basic_table interface
+    inline
+    std::string name() const {
+        return Dynamic()->name(); }
 
   private:
 // types
@@ -141,7 +191,7 @@ class TTrain {
     // helper, returns true for EMU with oerlikon brake
     bool is_eztoer() const;
     // locates nearest vehicle belonging to the consist
-    TDynamicObject *find_nearest_consist_vehicle() const;
+	TDynamicObject *find_nearest_consist_vehicle(bool freefly, glm::vec3 pos) const;
     // mover master controller to specified position
     void set_master_controller( double const Position );
     // moves train brake lever to specified position, potentially emits switch sound if conditions are met
@@ -152,10 +202,24 @@ class TTrain {
     void set_train_brake_speed( TDynamicObject *Vehicle, int const Speed );
     // sets the motor connector button in paired unit to specified state
     void set_paired_open_motor_connectors_button( bool const State );
+    // helper, common part of pantograph selection methods
+    void change_pantograph_selection( int const Change );
+    // helper, common part of pantograh valves state update methods
+    void update_pantograph_valves();
     // update function subroutines
     void update_sounds( double const Deltatime );
     void update_sounds_runningnoise( sound_source &Sound );
     void update_sounds_radio();
+    inline
+    end cab_to_end( int const End ) const {
+        return (
+            End == 2 ?
+                end::rear :
+                end::front ); }
+    inline
+    end cab_to_end() const {
+        return cab_to_end( iCabn ); }
+	void update_screens(double dt);
 
     // command handlers
     // NOTE: we're currently using universal handlers and static handler map but it may be beneficial to have these implemented on individual class instance basis
@@ -202,6 +266,8 @@ class TTrain {
     static void OnCommand_manualbrakeincrease( TTrain *Train, command_data const &Command );
     static void OnCommand_manualbrakedecrease( TTrain *Train, command_data const &Command );
     static void OnCommand_alarmchaintoggle( TTrain *Train, command_data const &Command );
+    static void OnCommand_alarmchainenable(TTrain *Train, command_data const &Command);
+    static void OnCommand_alarmchaindisable(TTrain *Train, command_data const &Command);
     static void OnCommand_wheelspinbrakeactivate( TTrain *Train, command_data const &Command );
     static void OnCommand_sandboxactivate( TTrain *Train, command_data const &Command );
 	static void OnCommand_autosandboxtoggle(TTrain *Train, command_data const &Command);
@@ -225,10 +291,16 @@ class TTrain {
     static void OnCommand_reverserneutral( TTrain *Train, command_data const &Command );
     static void OnCommand_reverserbackward( TTrain *Train, command_data const &Command );
     static void OnCommand_alerteracknowledge( TTrain *Train, command_data const &Command );
+	static void OnCommand_cabsignalacknowledge( TTrain *Train, command_data const &Command );
     static void OnCommand_batterytoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_batteryenable( TTrain *Train, command_data const &Command );
     static void OnCommand_batterydisable( TTrain *Train, command_data const &Command );
+	static void OnCommand_cabactivationtoggle(TTrain *Train, command_data const &Command);
+	static void OnCommand_cabactivationenable(TTrain *Train, command_data const &Command);
+	static void OnCommand_cabactivationdisable(TTrain *Train, command_data const &Command);
     static void OnCommand_pantographcompressorvalvetoggle( TTrain *Train, command_data const &Command );
+    static void OnCommand_pantographcompressorvalveenable( TTrain *Train, command_data const &Command );
+    static void OnCommand_pantographcompressorvalvedisable( TTrain *Train, command_data const &Command );
     static void OnCommand_pantographcompressoractivate( TTrain *Train, command_data const &Command );
     static void OnCommand_pantographtogglefront( TTrain *Train, command_data const &Command );
     static void OnCommand_pantographtogglerear( TTrain *Train, command_data const &Command );
@@ -237,6 +309,13 @@ class TTrain {
     static void OnCommand_pantographlowerfront( TTrain *Train, command_data const &Command );
     static void OnCommand_pantographlowerrear( TTrain *Train, command_data const &Command );
     static void OnCommand_pantographlowerall( TTrain *Train, command_data const &Command );
+    static void OnCommand_pantographselectnext( TTrain *Train, command_data const &Command );
+    static void OnCommand_pantographselectprevious( TTrain *Train, command_data const &Command );
+    static void OnCommand_pantographtoggleselected( TTrain *Train, command_data const &Command );
+    static void OnCommand_pantographraiseselected( TTrain *Train, command_data const &Command );
+    static void OnCommand_pantographlowerselected( TTrain *Train, command_data const &Command );
+    static void OnCommand_pantographvalvesupdate( TTrain *Train, command_data const &Command );
+    static void OnCommand_pantographvalvesoff( TTrain *Train, command_data const &Command );
     static void OnCommand_linebreakertoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_linebreakeropen( TTrain *Train, command_data const &Command );
     static void OnCommand_linebreakerclose( TTrain *Train, command_data const &Command );
@@ -288,6 +367,7 @@ class TTrain {
     static void OnCommand_motoroverloadrelaythresholdsetlow( TTrain *Train, command_data const &Command );
     static void OnCommand_motoroverloadrelaythresholdsethigh( TTrain *Train, command_data const &Command );
     static void OnCommand_motoroverloadrelayreset( TTrain *Train, command_data const &Command );
+    static void OnCommand_universalrelayreset( TTrain *Train, command_data const &Command );
     static void OnCommand_heatingtoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_heatingenable( TTrain *Train, command_data const &Command );
     static void OnCommand_heatingdisable( TTrain *Train, command_data const &Command );
@@ -309,10 +389,20 @@ class TTrain {
     static void OnCommand_redmarkerenableright( TTrain *Train, command_data const &Command );
     static void OnCommand_redmarkerdisableright( TTrain *Train, command_data const &Command );
     static void OnCommand_headlighttogglerearleft( TTrain *Train, command_data const &Command );
+    static void OnCommand_headlightenablerearleft( TTrain *Train, command_data const &Command );
+    static void OnCommand_headlightdisablerearleft( TTrain *Train, command_data const &Command );
     static void OnCommand_headlighttogglerearright( TTrain *Train, command_data const &Command );
+    static void OnCommand_headlightenablerearright( TTrain *Train, command_data const &Command );
+    static void OnCommand_headlightdisablerearright( TTrain *Train, command_data const &Command );
     static void OnCommand_headlighttogglerearupper( TTrain *Train, command_data const &Command );
+    static void OnCommand_headlightenablerearupper( TTrain *Train, command_data const &Command );
+    static void OnCommand_headlightdisablerearupper( TTrain *Train, command_data const &Command );
     static void OnCommand_redmarkertogglerearleft( TTrain *Train, command_data const &Command );
+    static void OnCommand_redmarkerenablerearleft( TTrain *Train, command_data const &Command );
+    static void OnCommand_redmarkerdisablerearleft( TTrain *Train, command_data const &Command );
     static void OnCommand_redmarkertogglerearright( TTrain *Train, command_data const &Command );
+    static void OnCommand_redmarkerenablerearright( TTrain *Train, command_data const &Command );
+    static void OnCommand_redmarkerdisablerearright( TTrain *Train, command_data const &Command );
     static void OnCommand_redmarkerstoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_endsignalstoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_headlightsdimtoggle( TTrain *Train, command_data const &Command );
@@ -324,11 +414,18 @@ class TTrain {
     static void OnCommand_interiorlightdimtoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_interiorlightdimenable( TTrain *Train, command_data const &Command );
     static void OnCommand_interiorlightdimdisable( TTrain *Train, command_data const &Command );
+    static void OnCommand_compartmentlightstoggle( TTrain *Train, command_data const &Command );
+    static void OnCommand_compartmentlightsenable( TTrain *Train, command_data const &Command );
+    static void OnCommand_compartmentlightsdisable( TTrain *Train, command_data const &Command );
     static void OnCommand_instrumentlighttoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_instrumentlightenable( TTrain *Train, command_data const &Command );
     static void OnCommand_instrumentlightdisable( TTrain *Train, command_data const &Command );
     static void OnCommand_dashboardlighttoggle( TTrain *Train, command_data const &Command );
+    static void OnCommand_dashboardlightenable( TTrain *Train, command_data const &Command );
+    static void OnCommand_dashboardlightdisable( TTrain *Train, command_data const &Command );
     static void OnCommand_timetablelighttoggle( TTrain *Train, command_data const &Command );
+    static void OnCommand_timetablelightenable( TTrain *Train, command_data const &Command );
+    static void OnCommand_timetablelightdisable( TTrain *Train, command_data const &Command );
     static void OnCommand_doorlocktoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_doortoggleleft( TTrain *Train, command_data const &Command );
     static void OnCommand_doortoggleright( TTrain *Train, command_data const &Command );
@@ -344,21 +441,37 @@ class TTrain {
     static void OnCommand_doorcloseall( TTrain *Train, command_data const &Command );
     static void OnCommand_doorsteptoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_doormodetoggle( TTrain *Train, command_data const &Command );
-    static void OnCommand_carcouplingincrease( TTrain *Train, command_data const &Command );
-    static void OnCommand_carcouplingdisconnect( TTrain *Train, command_data const &Command );
+	static void OnCommand_mirrorstoggle( TTrain *Train, command_data const &Command );
+    static void OnCommand_nearestcarcouplingincrease( TTrain *Train, command_data const &Command );
+    static void OnCommand_nearestcarcouplingdisconnect( TTrain *Train, command_data const &Command );
+    static void OnCommand_nearestcarcoupleradapterattach( TTrain *Train, command_data const &Command );
+    static void OnCommand_nearestcarcoupleradapterremove( TTrain *Train, command_data const &Command );
+    static void OnCommand_occupiedcarcouplingdisconnect( TTrain *Train, command_data const &Command );
+	static void OnCommand_occupiedcarcouplingdisconnectback( TTrain *Train, command_data const &Command );
     static void OnCommand_departureannounce( TTrain *Train, command_data const &Command );
     static void OnCommand_hornlowactivate( TTrain *Train, command_data const &Command );
     static void OnCommand_hornhighactivate( TTrain *Train, command_data const &Command );
     static void OnCommand_whistleactivate( TTrain *Train, command_data const &Command );
     static void OnCommand_radiotoggle( TTrain *Train, command_data const &Command );
+    static void OnCommand_radioenable( TTrain *Train, command_data const &Command );
+    static void OnCommand_radiodisable( TTrain *Train, command_data const &Command );
     static void OnCommand_radiochannelincrease( TTrain *Train, command_data const &Command );
     static void OnCommand_radiochanneldecrease( TTrain *Train, command_data const &Command );
+    static void OnCommand_radiochannelset( TTrain *Train, command_data const &Command );
     static void OnCommand_radiostopsend( TTrain *Train, command_data const &Command );
+    static void OnCommand_radiostopenable( TTrain *Train, command_data const &Command );
+    static void OnCommand_radiostopdisable( TTrain *Train, command_data const &Command );
     static void OnCommand_radiostoptest( TTrain *Train, command_data const &Command );
     static void OnCommand_radiocall3send( TTrain *Train, command_data const &Command );
+	static void OnCommand_radiovolumeincrease(TTrain *Train, command_data const &Command);
+	static void OnCommand_radiovolumedecrease(TTrain *Train, command_data const &Command);
+	static void OnCommand_radiovolumeset(TTrain *Train, command_data const &Command);
     static void OnCommand_cabchangeforward( TTrain *Train, command_data const &Command );
     static void OnCommand_cabchangebackward( TTrain *Train, command_data const &Command );
     static void OnCommand_generictoggle( TTrain *Train, command_data const &Command );
+	static void OnCommand_vehiclemoveforwards( TTrain *Train, command_data const &Command );
+	static void OnCommand_vehiclemovebackwards( TTrain *Train, command_data const &Command );
+	static void OnCommand_vehicleboost( TTrain *Train, command_data const &Command );
 	static void OnCommand_springbraketoggle(TTrain *Train, command_data const &Command);
 	static void OnCommand_springbrakeenable(TTrain *Train, command_data const &Command);
 	static void OnCommand_springbrakedisable(TTrain *Train, command_data const &Command);
@@ -366,6 +479,15 @@ class TTrain {
 	static void OnCommand_springbrakeshutoffenable(TTrain *Train, command_data const &Command);
 	static void OnCommand_springbrakeshutoffdisable(TTrain *Train, command_data const &Command);
 	static void OnCommand_springbrakerelease(TTrain *Train, command_data const &Command);
+    static void OnCommand_distancecounteractivate( TTrain *Train, command_data const &Command );
+	static void OnCommand_speedcontrolincrease(TTrain *Train, command_data const &Command);
+	static void OnCommand_speedcontroldecrease(TTrain *Train, command_data const &Command);
+	static void OnCommand_speedcontrolpowerincrease(TTrain *Train, command_data const &Command);
+	static void OnCommand_speedcontrolpowerdecrease(TTrain *Train, command_data const &Command);
+	static void OnCommand_speedcontrolbutton(TTrain *Train, command_data const &Command);
+	static void OnCommand_inverterenable(TTrain *Train, command_data const &Command);
+	static void OnCommand_inverterdisable(TTrain *Train, command_data const &Command);
+	static void OnCommand_invertertoggle(TTrain *Train, command_data const &Command);
 
 
 // members
@@ -374,6 +496,7 @@ class TTrain {
     TMoverParameters *mvOccupied { nullptr }; // człon, w którym sterujemy hamulcem
     TMoverParameters *mvSecond { nullptr }; // drugi człon (ET40, ET41, ET42, ukrotnienia)
     TMoverParameters *mvThird { nullptr }; // trzeci człon (SN61)
+    TMoverParameters *mvPantographUnit { nullptr }; // nearest pantograph equipped unit
     // helper variable, to prevent immediate switch between closing and opening line breaker circuit
     int m_linebreakerstate { 0 }; // 0: open, 1: closed, 2: freshly closed (and yes this is awful way to go about it)
     static const commandhandler_map m_commandhandlers;
@@ -383,7 +506,6 @@ public: // reszta może by?publiczna
 
     // McZapkie: definicje wskaźników
     // Ra 2014-08: częsciowo przeniesione do tablicy w TCab
-    TGauge ggZbS;
     TGauge ggClockSInd;
     TGauge ggClockMInd;
     TGauge ggClockHInd;
@@ -405,10 +527,13 @@ public: // reszta może by?publiczna
     TGauge ggMainCtrlAct;
     TGauge ggScndCtrl;
     TGauge ggScndCtrlButton;
+    TGauge ggScndCtrlOffButton;
     TGauge ggDirKey;
+    TGauge ggDirForwardButton;
+    TGauge ggDirNeutralButton;
+    TGauge ggDirBackwardButton;
     TGauge ggBrakeCtrl;
     TGauge ggLocalBrake;
-    TGauge ggManualBrake;
     TGauge ggAlarmChain;
     TGauge ggBrakeProfileCtrl; // nastawiacz GPR - przelacznik obrotowy
     TGauge ggBrakeProfileG; // nastawiacz GP - hebelek towarowy
@@ -421,26 +546,29 @@ public: // reszta może by?publiczna
     TGauge ggMainOnButton;
     TGauge ggMainButton; // EZT
     TGauge ggSecurityResetButton;
+    TGauge ggSHPResetButton;
     TGauge ggReleaserButton;
-	TGauge ggSpringBrakeToggleButton;
 	TGauge ggSpringBrakeOnButton;
 	TGauge ggSpringBrakeOffButton;
 	TGauge ggUniveralBrakeButton1;
 	TGauge ggUniveralBrakeButton2;
 	TGauge ggUniveralBrakeButton3;
+    TGauge ggEPFuseButton;
     TGauge ggSandButton; // guzik piasecznicy
-	TGauge ggAutoSandAllow; // przełącznik piasecznicy
+	TGauge ggAutoSandButton; // przełącznik piasecznicy
     TGauge ggAntiSlipButton;
     TGauge ggFuseButton;
     TGauge ggConverterFuseButton; // hunter-261211: przycisk odblokowania nadmiarowego przetwornic i ogrzewania
     TGauge ggStLinOffButton;
-    TGauge ggRadioButton;
     TGauge ggRadioChannelSelector;
     TGauge ggRadioChannelPrevious;
     TGauge ggRadioChannelNext;
     TGauge ggRadioTest;
     TGauge ggRadioStop;
     TGauge ggRadioCall3;
+	TGauge ggRadioVolumeSelector;
+	TGauge ggRadioVolumePrevious;
+	TGauge ggRadioVolumeNext;
     TGauge ggUpperLightButton;
     TGauge ggLeftLightButton;
     TGauge ggRightLightButton;
@@ -473,15 +601,32 @@ public: // reszta może by?publiczna
 	TGauge ggHelperButton;
     TGauge ggNextCurrentButton;
 
-    std::array<TGauge, 10> ggUniversals; // NOTE: temporary arrangement until we have dynamically built control table
+ 	// yB 191005 - tempomat
+	TGauge ggSpeedControlIncreaseButton;
+	TGauge ggSpeedControlDecreaseButton;
+	TGauge ggSpeedControlPowerIncreaseButton;
+	TGauge ggSpeedControlPowerDecreaseButton;
+	std::array<TGauge, 10> ggSpeedCtrlButtons; // NOTE: temporary arrangement until we have dynamically built control table
+
+   std::array<TGauge, 10> ggUniversals; // NOTE: temporary arrangement until we have dynamically built control table
+   std::array<TGauge, 3> ggRelayResetButtons; // NOTE: temporary arrangement until we have dynamically built control table
+   std::array<TGauge, 12> ggInverterEnableButtons; // NOTE: temporary arrangement until we have dynamically built control table
+   std::array<TGauge, 12> ggInverterDisableButtons; // NOTE: temporary arrangement until we have dynamically built control table
+   std::array<TGauge, 12> ggInverterToggleButtons; // NOTE: temporary arrangement until we have dynamically built control table
 
     TGauge ggInstrumentLightButton;
     TGauge ggDashboardLightButton;
     TGauge ggTimetableLightButton;
-    TGauge ggCabLightButton; // hunter-091012: przelacznik oswietlania kabiny
+//    TGauge ggCabLightButton; // hunter-091012: przelacznik oswietlania kabiny
     TGauge ggCabLightDimButton; // hunter-091012: przelacznik przyciemnienia
-    TGauge ggBatteryButton; // Stele 161228 hebelek baterii
     // oswietlenia kabiny
+    TGauge ggCompartmentLightsButton;
+    TGauge ggCompartmentLightsOnButton;
+    TGauge ggCompartmentLightsOffButton;
+    TGauge ggBatteryButton; // Stele 161228 hebelek baterii
+    TGauge ggBatteryOnButton;
+    TGauge ggBatteryOffButton;
+	TGauge ggCabActivationButton; // Stele 161228 hebelek baterii
 
     // NBMX wrzesien 2003 - obsluga drzwi
     TGauge ggDoorLeftPermitButton;
@@ -496,15 +641,19 @@ public: // reszta może by?publiczna
     TGauge ggDoorAllOnButton;
     TGauge ggDoorAllOffButton;
     TGauge ggDepartureSignalButton;
+    TGauge ggDoorStepButton;
 
     // Winger 160204 - obsluga pantografow - ZROBIC
+/*
     TGauge ggPantFrontButton;
     TGauge ggPantRearButton;
     TGauge ggPantFrontButtonOff; // EZT
     TGauge ggPantRearButtonOff;
+*/
     TGauge ggPantAllDownButton;
     TGauge ggPantSelectedButton;
     TGauge ggPantSelectedDownButton;
+    TGauge ggPantValvesButton;
     TGauge ggPantCompressorButton;
     TGauge ggPantCompressorValve;
     // Winger 020304 - wlacznik ogrzewania
@@ -523,6 +672,8 @@ public: // reszta może by?publiczna
     TGauge ggMotorBlowersRearButton; // rear traction motor fan switch
     TGauge ggMotorBlowersAllOffButton; // motor fans shutdown switch
 
+    TGauge ggDistanceCounterButton; // distance meter activation button
+
     TButton btLampkaPoslizg;
     TButton btLampkaStyczn;
     TButton btLampkaNadmPrzetw;
@@ -533,6 +684,8 @@ public: // reszta może by?publiczna
     TButton btLampkaNadmSil;
     TButton btLampkaWylSzybki;
     TButton btLampkaWylSzybkiOff;
+    TButton btLampkaMainBreakerReady;
+    TButton btLampkaMainBreakerBlinkingIfReady;
     TButton btLampkaNadmWent;
     TButton btLampkaNadmSpr; // TODO: implement
     // yB: drugie lampki dla EP05 i ET42
@@ -550,6 +703,7 @@ public: // reszta może by?publiczna
     TButton btLampkaUkrotnienie;
     TButton btLampkaHamPosp;
     TButton btLampkaRadio;
+	TButton btLampkaRadioMessage;
     TButton btLampkaRadioStop;
     TButton btLampkaHamowanie1zes;
     TButton btLampkaHamowanie2zes;
@@ -567,7 +721,8 @@ public: // reszta może by?publiczna
     TButton btLampkaOgrzewanieSkladu;
     TButton btLampkaSHP;
     TButton btLampkaCzuwaka; // McZapkie-141102
-    TButton btLampkaRezerwa;
+	TButton btLampkaCzuwakaSHP;
+	TButton btLampkaRezerwa;
     // youBy - jakies dodatkowe lampki
     TButton btLampkaNapNastHam;
     TButton btLampkaSprezarka;
@@ -594,7 +749,6 @@ public: // reszta może by?publiczna
     TButton btLampkaPrzekrMaxSila;
     TButton btLampkaDoorLeft;
     TButton btLampkaDoorRight;
-    TButton btLampkaDoors;
     TButton btLampkaDepartureSignal;
     TButton btLampkaBlokadaDrzwi;
     TButton btLampkaDoorLockOff;
@@ -618,46 +772,50 @@ public: // reszta może by?publiczna
     TButton btLampkaMotorBlowers;
     TButton btLampkaCoolingFans;
     TButton btLampkaTempomat;
+    TButton btLampkaDistanceCounter;
 
-    TButton btCabLight; // hunter-171012: lampa oswietlajaca kabine
+//    TButton btCabLight; // hunter-171012: lampa oswietlajaca kabine
     // Ra 2013-12: wirtualne "lampki" do odbijania na haslerze w PoKeys
     TButton btHaslerBrakes; // ciśnienie w cylindrach
     TButton btHaslerCurrent; // prąd na silnikach
 
-    sound_source dsbReverserKey { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // hunter-121211
-    sound_source dsbNastawnikJazdy { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
-    sound_source dsbNastawnikBocz { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // hunter-081211
-    sound_source dsbSwitch { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
-    sound_source dsbPneumaticSwitch { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
-
-    sound_source rsHiss { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // upuszczanie
-    sound_source rsHissU { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // napelnianie
-    sound_source rsHissE { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // nagle
-    sound_source rsHissX { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // fala
-    sound_source rsHissT { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // czasowy
-    sound_source rsSBHiss { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // local 
-    sound_source rsSBHissU { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // local, engage brakes
-    float m_lastlocalbrakepressure { -1.f }; // helper, cached level of pressure in local brake cylinder
-    float m_localbrakepressurechange { 0.f }; // recent change of pressure in local brake cylinder
-
-    sound_source rsFadeSound { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
-    sound_source rsRunningNoise{ sound_placement::internal, EU07_SOUND_GLOBALRANGE };
-    sound_source rsHuntingNoise{ sound_placement::internal, EU07_SOUND_GLOBALRANGE };
-
-    sound_source dsbHasler { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
-    sound_source dsbBuzzer { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
-    sound_source dsbSlipAlarm { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // Bombardier 011010: alarm przy poslizgu dla 181/182
+    std::optional<sound_source>
+        dsbNastawnikJazdy,
+        dsbNastawnikBocz,
+        dsbReverserKey,
+        dsbBuzzer,
+        m_radiostop,
+        dsbSlipAlarm,
+        m_distancecounterclear,
+        dsbHasler,
+        dsbSwitch,
+        dsbPneumaticSwitch,
+        rsHiss,
+        rsHissU,
+        rsHissE,
+        rsHissX,
+        rsHissT,
+        rsSBHiss,
+        rsSBHissU,
+        rsBrake,
+        rsFadeSound,
+        rsRunningNoise,
+        rsHuntingNoise,
+        m_rainsound;
     sound_source m_radiosound { sound_placement::internal, 2 * EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // cached template for radio messages
     std::vector<std::pair<int, std::shared_ptr<sound_source>>> m_radiomessages; // list of currently played radio messages
-    sound_source m_radiostop { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
+	std::vector<std::pair<std::reference_wrapper<std::optional<sound_source>>, glm::vec3>> CabSoundLocations; // list of offsets for manually located sounds;
+    float m_lastlocalbrakepressure { -1.f }; // helper, cached level of pressure in local brake cylinder
+    float m_localbrakepressurechange { 0.f }; // recent change of pressure in local brake cylinder
 /*
     int iCabLightFlag; // McZapkie:120503: oswietlenie kabiny (0: wyl, 1: przyciemnione, 2: pelne)
     bool bCabLight; // hunter-091012: czy swiatlo jest zapalone?
     bool bCabLightDim; // hunter-091012: czy przyciemnienie kabiny jest zapalone?
 */
     // McZapkie: opis kabiny - obszar poruszania sie mechanika oraz zajetosc
-    std::array<TCab, maxcab + 1> Cabine; // przedzial maszynowy, kabina 1 (A), kabina 2 (B)
+    std::array<TCab, 3> Cabine; // przedzial maszynowy, kabina 1 (A), kabina 2 (B)
     int iCabn { 0 }; // 0: mid, 1: front, 2: rear
+    bool is_cab_initialized { false };
     // McZapkie: do poruszania sie po kabinie
     Math3D::vector3 pMechSittingPosition; // ABu 180404
     Math3D::vector3 MirrorPosition( bool lewe );
@@ -669,10 +827,7 @@ private:
     float fHaslerTimer;
     float fConverterTimer; // hunter-261211: dla przekaznika
     float fMainRelayTimer; // hunter-141211: zalaczanie WSa z opoznieniem
-    float fCzuwakTestTimer; // hunter-091012: do testu czuwaka
-    float fScreenTimer { 0.f };
-
-    bool CAflag { false }; // hunter-131211: dla osobnego zbijania CA i SHP
+    int ScreenUpdateRate { 0 }; // vehicle specific python screen update rate override
 
     // McZapkie-240302 - przyda sie do tachometru
     float fTachoVelocity{ 0.0f };
@@ -696,23 +851,39 @@ private:
     bool bBatt[8]; // baterie
     bool bConv[8]; // przetwornice
     bool bComp[8][2]; // sprezarki
+	std::vector<std::tuple<bool, bool, int>> bCompressors;
     bool bHeat[8]; // grzanie
     // McZapkie: do syczenia
     float fPPress, fNPress;
     bool m_mastercontrollerinuse { false };
     float m_mastercontrollerreturndelay { 0.f };
-    int iRadioChannel { 1 }; // numer aktualnego kana?u radiowego
-    std::vector<std::pair<std::string, texture_handle>> m_screens;
+	screenentry_sequence m_screens;
+	uint16_t vid { 0 }; // train network recipient id
+    float m_distancecounter { -1.f }; // distance traveled since meter was activated or -1 if inactive
+    double m_brakehandlecp{ 0.0 };
+    bool m_doors{ false }; // helper, true if any door is open
+	bool m_doorspermitleft{ false }; // helper, true if door is open, blinking if door is pemitted
+	bool m_doorspermitright{ false }; // helper, true if door is open, blinking if door is pemitted
+    bool m_dirforward{ false }; // helper, true if direction set to forward
+    bool m_dirneutral{ false }; // helper, true if direction set to neutral
+    bool m_dirbackward{ false }; // helper, true if direction set to backward
+    bool m_doorpermits{ false }; // helper, true if any door permit is active
+    float m_doorpermittimers[2] = { -1.f, -1.f };
+    // ld substitute
+    bool m_couplingdisconnect { false };
+	bool m_couplingdisconnectback { false };
 
   public:
-    float fPress[20][3]; // cisnienia dla wszystkich czlonow
-	float bBrakes[20][2]; // zalaczenie i dzialanie hamulcow
+    float fPress[20][7]; // cisnienia dla wszystkich czlonow
+	bool bBrakes[20][2]; // zalaczenie i dzialanie hamulcow
     static std::vector<std::string> const fPress_labels;
     float fEIMParams[9][10]; // parametry dla silnikow asynchronicznych
 	float fDieselParams[9][10]; // parametry dla silnikow asynchronicznych
-    int RadioChannel() const { return iRadioChannel; };
     // plays provided sound from position of the radio
+	bool radio_message_played;
     void radio_message( sound_source *Message, int const Channel );
+    inline auto const RadioChannel() const { return ( Dynamic()->Mechanik ? Dynamic()->Mechanik->iRadioChannel : 1 ); }
+    inline auto &RadioChannel() { return Dynamic()->Mechanik->iRadioChannel; }
     inline TDynamicObject *Dynamic() { return DynamicObject; };
     inline TDynamicObject const *Dynamic() const { return DynamicObject; };
     inline TMoverParameters *Controlled() { return mvControlled; };
@@ -720,9 +891,11 @@ private:
     inline TMoverParameters *Occupied() { return mvOccupied; };
     inline TMoverParameters const *Occupied() const { return mvOccupied; };
     void DynamicSet(TDynamicObject *d);
+    void MoveToVehicle( TDynamicObject *target );
     // checks whether specified point is within boundaries of the active cab
     bool point_inside( Math3D::vector3 const Point ) const;
     Math3D::vector3 clamp_inside( Math3D::vector3 const &Point ) const;
+    const screenentry_sequence & get_screens();
 
 	float get_tacho();
 	float get_tank_pressure();
@@ -737,5 +910,15 @@ private:
     void set_scndctrl(int);
     void set_trainbrake(float);
     void set_localbrake(float);
+
+	uint16_t id();
+	bool pending_delete = false;
 };
+
+class train_table : public basic_table<TTrain> {
+public:
+    void update( double dt );
+    TTrain *find_id( std::uint16_t const Id ) const;
+};
+
 //---------------------------------------------------------------------------
