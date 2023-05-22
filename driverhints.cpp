@@ -462,22 +462,22 @@ TController::cue_action( driver_hint const Action, float const Actionparameter )
             break;
         }
         // manual brake
-        case driver_hint::manualbrakon: {
+        case driver_hint::manualbrakeon: {
             if( AIControllFlag ) {
                 mvOccupied->IncManualBrakeLevel( ManualBrakePosNo );
             }
-            remove_hint( driver_hint::manualbrakoff );
+            remove_hint( driver_hint::manualbrakeoff );
             hint(
                 Action,
                 [this]( float const Parameter ) -> bool {
                     return ( ( mvOccupied->LocalBrake != TLocalBrake::ManualBrake ) || ( mvOccupied->MBrake == false ) || ( mvOccupied->ManualBrakePos == ManualBrakePosNo ) ); } );
             break;
         }
-        case driver_hint::manualbrakoff: {
+        case driver_hint::manualbrakeoff: {
             if( AIControllFlag ) {
                 mvOccupied->DecManualBrakeLevel( ManualBrakePosNo );
             }
-            remove_hint( driver_hint::manualbrakon );
+            remove_hint( driver_hint::manualbrakeon );
             hint(
                 Action,
                 [this]( float const Parameter ) -> bool {

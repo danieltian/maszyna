@@ -53,7 +53,7 @@ enum TSignals
 };
 
 enum TMovementStatus
-{ // flagi bitowe ruchu (iDrivigFlags)
+{ // flagi bitowe ruchu (iDrivingFlags)
     moveStopCloser = 1, // podjechać blisko W4 (nie podjeżdżać na początku ani po zmianie czoła)
     moveStopPoint = 2, // stawać na W4 (wyłączone podczas zmiany czoła)
     moveActive = 4, // pojazd jest załączony i skanuje
@@ -222,11 +222,11 @@ public:
     void TakeControl( bool const Aidriver, bool const Forcevehiclecheck = false );
     inline
     bool primary( bool const Primary ) {
-        SetFlag( iDrivigFlags, ( Primary ? movePrimary : -movePrimary ) );
+        SetFlag( iDrivingFlags, ( Primary ? movePrimary : -movePrimary ) );
         return primary(); }
     inline
     bool primary() const {
-        return ( ( iDrivigFlags & movePrimary ) != 0 ); };
+        return ( ( iDrivingFlags & movePrimary ) != 0 ); };
     inline
     TMoverParameters const *Controlling() const {
         return mvControlling; }
@@ -246,7 +246,7 @@ public:
         return eAction; }
     inline
     bool is_active() const {
-        return TestFlag( iDrivigFlags, moveActive ); }
+        return TestFlag( iDrivingFlags, moveActive ); }
     inline
     bool is_train() const {
         return TestFlag( mvOccupied->CategoryFlag, 1 ); }
@@ -305,7 +305,7 @@ private:
         braking_distance_multiplier( float const Targetvelocity ) const;
     inline
         int DrivigFlags() const {
-            return iDrivigFlags; };
+            return iDrivingFlags; };
     inline
         double DirectionalVel() const {
             return mvOccupied->Vel * sign( iDirection * mvOccupied->V ); }
@@ -427,7 +427,7 @@ private:
     double fStopTime = 0.0; // czas postoju przed dalszą jazdą (np. na przystanku)
     float ExchangeTime{ 0.0 }; // time needed to finish current load exchange
     double fShuntVelocity = 40.0; // prędkość manewrowania, zależy m.in. od składu
-    int iDrivigFlags = // flagi bitowe ruchu
+    int iDrivingFlags = // flagi bitowe ruchu
         moveStopPoint | // podjedź do W4 możliwie blisko
         moveStopHere | // nie podjeżdżaj do semafora, jeśli droga nie jest wolna
         moveStartHorn; // podaj sygnał po podaniu wolnej drogi
